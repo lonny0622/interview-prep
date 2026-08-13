@@ -29,6 +29,22 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS practice_sessions (
+    id TEXT PRIMARY KEY,
+    question_ids TEXT NOT NULL,
+    current_index INTEGER NOT NULL DEFAULT 0,
+    filters TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS practice_answers (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    question_id TEXT NOT NULL,
+    answer_text TEXT NOT NULL,
+    score_json TEXT,
+    created_at TEXT NOT NULL
+  );
 `)
 
 const now = () => new Date().toISOString()
@@ -98,6 +114,19 @@ export function createLearningSession(questionIds) {
   const timestamp = now()
   database.prepare('INSERT INTO learning_sessions (id, question_ids, current_index, created_at, updated_at) VALUES (?, ?, 0, ?, ?)').run(id, JSON.stringify(questionIds), timestamp, timestamp)
   return { id, questionIds, currentIndex: 0, createdAt: timestamp }
+}
+
+export function createPracticeSession(questionIds, filters = {}) {
+  const id = crypto.randomUUID()
+  const timestamp = now()
+  database.prepare('INSERT INTO practice_sessions (id, question_ids, current_index, filters, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)').run(id, JSON.stringify(questionIds), JSON.stringify(filters), timestamp, timestamp)
+  return { id, questionIds, currentIndex: 0, filters, createdAt: timestamp }
+}
+
+export function savePracticeAnswer(sessionId, questionId, answerText, score) {
+  const id = crypto.randomUUID()
+  database.prepare('INSERT INTO practice_answers (id, session_id, question_id, answer_text, score_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, sessionId, questionId, answerText, score ? JSON.stringify(score) : null, now())
+  return { id, sessionId, questionId, answerText, score: score || null }
 }
 
 export function seedQuestionsIfEmpty() {

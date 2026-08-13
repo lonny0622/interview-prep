@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { createQuestions, createLearningSession, editQuestion, listQuestions, removeQuestion } from './db.mjs'
+import { createQuestions, createLearningSession, createPracticeSession, editQuestion, listQuestions, removeQuestion, savePracticeAnswer } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -29,6 +29,7 @@ const port = Number(env('LLM_GATEWAY_PORT', '8787'))
 const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
+const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
 
 function jsonResponse(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -102,6 +103,42 @@ async function callModel(source) {
   return normalizeDrafts(extractJson(content))
 }
 
+async function scoreAnswer(question, answer) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
+  try {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({ model, temperature: 0.1, max_tokens: 1200, messages: [
+        { role: 'system', content: `你是面试回答教练。只输出 JSON，不要代码围栏。结构：${scoreSchema}。所有分数为 0 到 100 的整数，评价要基于题目和回答，不要假装知道回答之外的事实。` },
+        { role: 'user', content: `题目：${question.title}\n参考答案：${question.answer}\n用户回答：${answer}` },
+      ] }),
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error?.message || `评分请求失败（${response.status}）。`)
+    const content = payload.choices?.[0]?.message?.content
+    if (typeof content !== 'string') throw new Error('评分模型没有返回文本内容。')
+    const candidate = content.match(/\{[\s\S]*\}/)?.[0]
+    if (!candidate) throw new Error('评分结果不是有效 JSON。')
+    return JSON.parse(candidate)
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`评分请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function fallbackScore(question, answer) {
+  const normalized = answer.trim()
+  const lengthScore = Math.min(40, Math.round(normalized.length / 5))
+  const keywordScore = question.answer.split(/[，。；、\s]+/).filter((word) => word.length > 1 && normalized.includes(word)).length * 10
+  const score = Math.min(85, Math.max(10, lengthScore + Math.min(50, keywordScore)))
+  return { score, dimensions: { correctness: score, structure: normalized.length > 40 ? 70 : 35, clarity: normalized.length > 20 ? 65 : 30, relevance: keywordScore ? 75 : 35 }, strengths: normalized.length > 40 ? ['回答包含了一定展开'] : ['已经开始组织答案'], gaps: keywordScore ? ['可以补充边界条件和具体例子'] : ['回答过短，缺少关键概念'], betterAnswer: question.interviewAnswer || question.answer, source: 'fallback' }
+}
+
 async function handle(request, response) {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' })
@@ -151,6 +188,40 @@ async function handle(request, response) {
       return jsonResponse(response, 201, { session: createLearningSession(body.questionIds) })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '学习 session 创建失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/practice-sessions') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!Array.isArray(body.questionIds)) return jsonResponse(response, 400, { error: 'questionIds 不能为空数组。' })
+      return jsonResponse(response, 201, { session: createPracticeSession(body.questionIds, body.filters || {}) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '刷题 session 创建失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/practice-answers') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!body.sessionId || !body.questionId || typeof body.answerText !== 'string') return jsonResponse(response, 400, { error: 'sessionId、questionId 和 answerText 必填。' })
+      return jsonResponse(response, 201, { answer: savePracticeAnswer(body.sessionId, body.questionId, body.answerText, body.score) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '回答保存失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/score-answer') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!body.question || typeof body.answer !== 'string' || !body.answer.trim()) return jsonResponse(response, 400, { error: 'question 和 answer 必填。' })
+      let score
+      try {
+        score = await scoreAnswer(body.question, body.answer)
+        score.source = 'llm'
+      } catch (error) {
+        score = { ...fallbackScore(body.question, body.answer), fallbackReason: error.message }
+      }
+      return jsonResponse(response, 200, { score, model })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '评分失败。' })
     }
   }
   if (request.method === 'POST' && request.url === '/api/llm/parse-questions') {
