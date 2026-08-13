@@ -4,9 +4,11 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { llmConfig, llmStatus } from './config/llm'
 import './App.css'
-import type { ResumeProfile, UserProfile } from './types/profile'
-import { ProfileResumePicker } from './components/profile/ProfileResumePicker'
-import { ProfileModal } from './components/profile/ProfileModal'
+import type { UserProfile, JobProfile } from './types/profile'
+import type { InterviewSetup as InterviewSetupState } from './types/interview'
+import { ProfileCenter } from './components/profile/ProfileCenter'
+import { InterviewSetup } from './components/interview/InterviewSetup'
+import { profileApi } from './api/profileApi'
 
 type Difficulty = '简单' | '中等' | '困难'
 type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
@@ -146,18 +148,11 @@ function App() {
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
-  const [interviewSetup, setInterviewSetup] = useState({ role: '', company: '', jd: '', resume: '', resumeId: '', duration: '30 分钟', difficulty: '中等' })
-  const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
-  const [resumeUpload, setResumeUpload] = useState({ loading: false, fileName: '', error: '' })
+  const [interviewSetup, setInterviewSetup] = useState<InterviewSetupState>({ role: '', company: '', jd: '', resume: '', jobProfileId: '', resumeId: '', duration: '30 分钟', difficulty: '中等' })
   const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null })
-  const [profileDraft, setProfileDraft] = useState<UserProfile>(profile)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [profileSaving, setProfileSaving] = useState(false)
-  const [profileRoleInput, setProfileRoleInput] = useState('')
-  const [profileResumeRole, setProfileResumeRole] = useState('')
-  const [profileResumeUpload, setProfileResumeUpload] = useState({ loading: false, error: '' })
-  const [resumePickerOpen, setResumePickerOpen] = useState(false)
+  const [jobs, setJobs] = useState<JobProfile[]>([])
   const interviewRecorderRef = useRef<MediaRecorder | null>(null)
   const interviewChunksRef = useRef<Blob[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -181,7 +176,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    fetch('/api/profile').then((response) => response.ok ? response.json() : Promise.reject(new Error('个人资料服务不可用'))).then((payload: { profile: UserProfile }) => { setProfile(payload.profile); setProfileDraft(payload.profile) }).catch(() => {})
+    profileApi.get().then((payload) => { setProfile(payload.profile); setJobs(payload.profile.jobs || []) }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -192,13 +187,6 @@ function App() {
       .catch(() => setServerReady(false))
   }, [activeNav, learningSessionId, questions, serverReady])
 
-  useEffect(() => {
-    if (activeNav !== 'interview' || !serverReady) return
-    fetch('/api/interview-sessions')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('模拟面试列表不可用')))
-      .then((payload: { sessions: InterviewSession[] }) => setInterviewSessions(payload.sessions || []))
-      .catch(() => {})
-  }, [activeNav, serverReady])
 
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set(questions.map((question) => question.category))]
@@ -370,76 +358,8 @@ function App() {
     }
   }
 
-  const resumeInterview = async (id: string) => {
-    try {
-      const response = await fetch(`/api/interview-sessions/${id}`)
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || '模拟面试恢复失败。')
-      setInterview({ session: payload.session, turns: payload.turns || [], answer: '', loading: false, completing: false, report: payload.session.report, error: '' })
-    } catch (error) { window.alert(error instanceof Error ? error.message : '模拟面试恢复失败。') }
-  }
+  const openProfile = () => { setProfileOpen(true) }
 
-  const uploadResume = async (file: File) => {
-    setResumeUpload({ loading: true, fileName: file.name, error: '' })
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ''; const chunkSize = 0x8000
-      for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-      const response = await fetch('/api/resume/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) }) })
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '简历解析失败。')
-      setInterviewSetup((current) => ({ ...current, resume: current.resume ? `${current.resume}\n\n${payload.text}` : payload.text }))
-      setResumeUpload({ loading: false, fileName: file.name, error: '' })
-    } catch (error) { setResumeUpload({ loading: false, fileName: file.name, error: error instanceof Error ? error.message : '简历解析失败。' }) }
-  }
-
-  const uploadProfileResume = async (file: File, selectedRole?: string) => {
-    setProfileResumeUpload({ loading: true, error: '' })
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ''; const chunkSize = 0x8000
-      for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-      const response = await fetch('/api/resume/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) }) })
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '简历解析失败。')
-      const roleOptions = profileDraft.targetRoles.length ? profileDraft.targetRoles : ['通用']
-      const role = roleOptions.includes(selectedRole || profileResumeRole) ? (selectedRole || profileResumeRole) : roleOptions[0]
-      const resume = { id: crypto.randomUUID(), role, fileName: file.name, text: payload.text }
-      setProfileDraft((current) => ({ ...current, resumeText: payload.text, resumeFileName: file.name, resumes: [...current.resumes.filter((item) => item.role !== role), resume] }))
-      setProfileResumeUpload({ loading: false, error: '' })
-    } catch (error) { setProfileResumeUpload({ loading: false, error: error instanceof Error ? error.message : '简历解析失败。' }) }
-  }
-
-  const saveProfile = async () => {
-    setProfileSaving(true)
-    try {
-      const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileDraft) })
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '个人资料保存失败。')
-      setProfile(payload.profile); setProfileDraft(payload.profile); setProfileOpen(false)
-    } catch (error) { window.alert(error instanceof Error ? error.message : '个人资料保存失败。') } finally { setProfileSaving(false) }
-  }
-
-  const openProfile = () => { setProfileDraft(profile); setProfileResumeRole(profile.targetRoles[0] || profile.resumes[0]?.role || '通用'); setProfileOpen(true) }
-
-  const addProfileRole = () => {
-    const role = profileRoleInput.trim()
-    if (!role || profileDraft.targetRoles.includes(role)) return
-    setProfileDraft({ ...profileDraft, targetRoles: [...profileDraft.targetRoles, role].slice(0, 10) })
-    setProfileRoleInput('')
-  }
-
-  const deleteProfileResume = (id: string) => {
-    const nextResumes = profileDraft.resumes.filter((resume) => resume.id !== id)
-    const current = profileDraft.resumes.find((resume) => resume.id === id)
-    setProfileDraft({ ...profileDraft, resumes: nextResumes, resumeText: current?.text === profileDraft.resumeText ? (nextResumes[0]?.text || '') : profileDraft.resumeText, resumeFileName: current?.fileName === profileDraft.resumeFileName ? (nextResumes[0]?.fileName || '') : profileDraft.resumeFileName })
-  }
-
-  const useProfileForInterview = () => {
-    const resumes = profileDraft.resumes.length ? profileDraft.resumes : (profileDraft.resumeText ? [{ id: 'legacy-default', role: profileDraft.targetRoles[0] || '通用', fileName: profileDraft.resumeFileName, text: profileDraft.resumeText }] : [])
-    if (!resumes.length) return
-    setResumePickerOpen(true)
-  }
-
-  const applyResumeSelection = (resume: ResumeProfile) => {
-    setInterviewSetup((current) => ({ ...current, role: resume.role, resume: resume.text, resumeId: resume.id }))
-    setResumePickerOpen(false)
-  }
 
   const submitInterviewTurn = async () => {
     if (!interview?.session?.id || !interview.answer.trim()) return
@@ -535,7 +455,7 @@ function App() {
   }
 
   const renderInterview = () => {
-    if (!interview) return <div className="interview-setup"><p className="eyebrow">Interview workspace / 04</p><h1>模拟面试</h1><p className="page-description">引用你的简历、项目素材和 JD，生成一场覆盖项目题、八股、场景题和反问的完整面试。</p>{interviewSessions.some((session) => session.status === 'active') && <div className="resume-sessions"><span className="section-label">继续未完成的面试</span>{interviewSessions.filter((session) => session.status === 'active').slice(0, 3).map((session) => <button key={session.id} type="button" onClick={() => void resumeInterview(session.id)}><strong>{String(session.profile.role || '未命名岗位')}</strong><span>第 {session.currentIndex + 1} / {session.blueprint.length} 轮</span><ArrowRight size={13} /></button>)}</div>} {(profile.resumeText || profile.targetRoles.length) && <button className="profile-use-button" type="button" onClick={useProfileForInterview}><Check size={13} />使用个人中心资料{profile.targetRoles[0] ? ` · ${profile.targetRoles[0]}` : ''}</button>}<div className="interview-form"><label><span>目标岗位</span><input value={interviewSetup.role} onChange={(event) => setInterviewSetup({ ...interviewSetup, role: event.target.value })} placeholder="例如：高级前端工程师" /></label><label><span>公司（可选）</span><input value={interviewSetup.company} onChange={(event) => setInterviewSetup({ ...interviewSetup, company: event.target.value })} placeholder="例如：某互联网公司" /></label><label className="full-field"><span>岗位 JD</span><textarea rows={6} value={interviewSetup.jd} onChange={(event) => setInterviewSetup({ ...interviewSetup, jd: event.target.value })} placeholder="粘贴岗位职责和任职要求" /></label><label className="full-field"><span>上传简历文档</span><input className="resume-file-input" type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadResume(file) }} />{resumeUpload.loading && <small className="upload-status">正在提取 {resumeUpload.fileName}…</small>}{resumeUpload.fileName && !resumeUpload.loading && !resumeUpload.error && <small className="upload-status success">已读取：{resumeUpload.fileName}</small>}{resumeUpload.error && <small className="upload-status error">{resumeUpload.error}</small>}</label><label className="full-field"><span>简历或项目素材文本（可选）</span><textarea rows={8} value={interviewSetup.resume} onChange={(event) => setInterviewSetup({ ...interviewSetup, resume: event.target.value })} placeholder="也可以直接粘贴原始简历内容或项目素材" /></label><label><span>面试时长</span><select value={interviewSetup.duration} onChange={(event) => setInterviewSetup({ ...interviewSetup, duration: event.target.value })}><option>15 分钟</option><option>30 分钟</option><option>45 分钟</option></select></label><label><span>难度</span><select value={interviewSetup.difficulty} onChange={(event) => setInterviewSetup({ ...interviewSetup, difficulty: event.target.value })}><option>简单</option><option>中等</option><option>困难</option></select></label></div><button className="primary-button" type="button" disabled={(!interviewSetup.role.trim() && !interviewSetup.jd.trim()) || resumeUpload.loading} onClick={() => void startInterview()}>生成面试并开始 <Sparkles size={13} /></button></div>
+    if (!interview) return <InterviewSetup jobs={jobs} setup={interviewSetup} setSetup={setInterviewSetup} onStart={() => void startInterview()} onOpenProfile={openProfile} />
     if (interview.loading && !interview.session.id) return <div className="interview-setup"><p className="eyebrow">Interview session</p><h1>正在准备面试</h1><p className="page-description">正在根据岗位、JD 和简历生成问题蓝图…</p></div>
     if (interview.report) return <div className="interview-page"><header className="page-header interview-header"><div><p className="eyebrow">Interview review</p><h1>模拟面试复盘</h1><p className="page-description">共完成 {interview.turns.length} 轮回答 · {interviewSetup.role || '目标岗位'}</p></div><button className="quiet-button" type="button" onClick={() => setInterview(null)}>新建一场</button></header><div className="review-grid"><section className="review-summary"><span className="review-score-label">本次总结</span><p>{interview.report.summary}</p></section><section><h3>做得好的地方</h3><ul>{interview.report.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>需要注意</h3><ul>{interview.report.risks.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>下一步训练</h3><ul>{interview.report.suggestions.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>推荐重练题</h3><ul>{interview.report.nextQuestions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></div>
     const current = interview.session.blueprint[interview.session.currentIndex]
@@ -599,7 +519,6 @@ function App() {
     </div>
   }
 
-  const resumePicker = resumePickerOpen ? <ProfileResumePicker resumes={profile.resumes.length ? profile.resumes : [{ id: 'legacy-default', role: profile.targetRoles[0] || '通用', fileName: profile.resumeFileName || '个人简历', text: profile.resumeText }]} onSelect={applyResumeSelection} onClose={() => setResumePickerOpen(false)} /> : null
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
@@ -610,8 +529,7 @@ function App() {
     <main className="main-content">
       {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : activeNav === 'practice' ? renderPractice() : renderInterview()}
     </main>
-    {resumePicker}
-    {profileOpen && <ProfileModal profile={profile} draft={profileDraft} roleInput={profileRoleInput} resumeRole={profileResumeRole} resumeUpload={profileResumeUpload} saving={profileSaving} onRoleInputChange={setProfileRoleInput} onResumeRoleChange={setProfileResumeRole} onDraftChange={setProfileDraft} onAddRole={addProfileRole} onRemoveRole={(role) => setProfileDraft({ ...profileDraft, targetRoles: profileDraft.targetRoles.filter((item) => item !== role) })} onResumeFile={(file, role) => void uploadProfileResume(file, role)} onDeleteResume={deleteProfileResume} onSave={() => void saveProfile()} onClose={() => setProfileOpen(false)} />}
+    {profileOpen && <ProfileCenter profile={profile} jobs={jobs} onProfileChange={setProfile} onJobsChange={setJobs} onClose={() => setProfileOpen(false)} />}
     {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="modal-header"><div><p className="eyebrow">Question editor</p><h2 id="editor-title">{editor.mode === 'create' ? '新建题目' : '编辑题目'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setEditor(null)}><X size={18} /></button></div>

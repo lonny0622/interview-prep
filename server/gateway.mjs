@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateProfile } from './db.mjs'
+import { completeInterviewSession, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateJobProfile, updateResume, updateProfile } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -391,6 +391,20 @@ async function handle(request, response) {
       return jsonResponse(response, 400, { error: error.message || '个人资料保存失败。' })
     }
   }
+  if (request.method === 'GET' && request.url === '/api/profile/jobs') return jsonResponse(response, 200, { jobs: listJobProfiles() })
+  if (request.method === 'POST' && request.url === '/api/profile/jobs') {
+    try { const body = JSON.parse(await readBody(request)); if (!String(body.title || '').trim()) return jsonResponse(response, 400, { error: '岗位名称不能为空。' }); return jsonResponse(response, 201, { job: createJobProfile(body.title) }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '岗位创建失败。' }) }
+  }
+  if (request.method === 'PATCH' && request.url.match(/^\/api\/profile\/jobs\/[^/]+$/)) {
+    try { const id = request.url.split('/').pop(); const job = updateJobProfile(id, JSON.parse(await readBody(request))); return job ? jsonResponse(response, 200, { job }) : jsonResponse(response, 404, { error: '岗位不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '岗位更新失败。' }) }
+  }
+  if (request.method === 'DELETE' && request.url.match(/^\/api\/profile\/jobs\/[^/]+$/)) { const id = request.url.split('/').pop(); return deleteJobProfile(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '岗位不存在。' }) }
+  if (request.method === 'GET' && request.url.match(/^\/api\/profile\/jobs\/[^/]+\/resumes$/)) { const id = request.url.split('/')[4]; const job = listJobProfiles().find((item) => item.id === id); return job ? jsonResponse(response, 200, { resumes: job.resumes }) : jsonResponse(response, 404, { error: '岗位不存在。' }) }
+  if (request.method === 'POST' && request.url.match(/^\/api\/profile\/jobs\/[^/]+\/resumes$/)) {
+    try { const id = request.url.split('/')[4]; const body = JSON.parse(await readBody(request, 1_500_000)); if (!String(body.text || '').trim()) return jsonResponse(response, 400, { error: '简历文本不能为空。' }); const resume = createResume(id, body); return resume ? jsonResponse(response, 201, { resume }) : jsonResponse(response, 404, { error: '岗位不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '简历保存失败。' }) }
+  }
+  if (request.method === 'PATCH' && request.url.match(/^\/api\/profile\/resumes\/[^/]+$/)) { try { const id = request.url.split('/').pop(); const resume = updateResume(id, JSON.parse(await readBody(request))); return resume ? jsonResponse(response, 200, { resume }) : jsonResponse(response, 404, { error: '简历不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '简历更新失败。' }) } }
+  if (request.method === 'DELETE' && request.url.match(/^\/api\/profile\/resumes\/[^/]+$/)) { const id = request.url.split('/').pop(); return deleteResume(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '简历不存在。' }) }
   if (request.method === 'POST' && request.url === '/api/profile/parse') {
     try {
       const body = JSON.parse(await readBody(request, 1_500_000))
@@ -461,6 +475,16 @@ async function handle(request, response) {
       const body = JSON.parse(await readBody(request, 2_000_000))
       if (!body.profile || typeof body.profile !== 'object') return jsonResponse(response, 400, { error: 'profile 必须是对象。' })
       const rawProfile = body.profile
+      if (rawProfile.jobProfileId || rawProfile.resumeId) {
+        const job = listJobProfiles().find((item) => item.id === rawProfile.jobProfileId)
+        const resume = job?.resumes.find((item) => item.id === rawProfile.resumeId)
+        if (!job) return jsonResponse(response, 400, { error: '选择的岗位不存在。' })
+        if (!resume) return jsonResponse(response, 400, { error: '选择的简历不属于该岗位。' })
+        rawProfile.role = job.title
+        rawProfile.resume = resume.text
+        rawProfile.resumeFileName = resume.fileName
+        rawProfile.candidateProfile = resume.candidateProfile
+      }
       const structured = rawProfile.candidateProfile || await parseStructuredProfile(String(rawProfile.resume || ''), String(rawProfile.jd || ''), rawProfile)
       const profile = { ...rawProfile, candidateProfile: structured }
       const blueprint = await generateInterviewBlueprint(profile)

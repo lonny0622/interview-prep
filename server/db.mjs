@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 const dataPath = resolve(process.env.INTERVIEWPREP_DATA_DIR || resolve(dirname(new URL(import.meta.url).pathname), '..', 'data'), 'interviewprep.sqlite')
 mkdirSync(dirname(dataPath), { recursive: true })
 const database = new DatabaseSync(dataPath)
+database.exec('PRAGMA foreign_keys = ON;')
 
 database.exec(`
   PRAGMA journal_mode = WAL;
@@ -79,6 +80,30 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS job_profiles (
+    id TEXT PRIMARY KEY,
+    profile_id INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS resumes (
+    id TEXT PRIMARY KEY,
+    job_profile_id TEXT NOT NULL REFERENCES job_profiles(id) ON DELETE CASCADE,
+    file_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    candidate_profile_json TEXT NOT NULL DEFAULT '{}',
+    parsed_at TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS profile_migrations (
+    key TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+  );
 `)
 
 // Keep existing single-user databases forward compatible with the structured profile fields.
@@ -92,6 +117,8 @@ for (const statement of [
 
 const now = () => new Date().toISOString()
 const parseJson = (value, fallback) => { try { return JSON.parse(value || '') } catch { return fallback } }
+const toResume = (row) => ({ id: row.id, jobProfileId: row.job_profile_id, fileName: row.file_name, text: row.text, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null, isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at })
+const toJobProfile = (row) => ({ id: row.id, title: row.title, sortOrder: row.sort_order, isDefault: Boolean(row.is_default), resumes: [] })
 const toProfile = (row) => {
   if (!row) return null
   const legacyResume = row.resume_text ? [{ id: 'legacy-default', role: parseJson(row.target_roles, [])[0] || '通用', fileName: row.resume_file_name || '个人简历', text: row.resume_text, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null }] : []
@@ -125,8 +152,125 @@ export function listQuestions(filters = {}) {
 }
 
 export function getProfile() {
-  return toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || { id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null }
+  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || { id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null }
+  return { ...profile, jobs: listJobProfiles() }
 }
+
+export function listJobProfiles() {
+  const jobs = database.prepare('SELECT * FROM job_profiles WHERE profile_id = 1 ORDER BY sort_order ASC, created_at ASC').all().map(toJobProfile)
+  const resumes = database.prepare('SELECT * FROM resumes WHERE job_profile_id IN (SELECT id FROM job_profiles WHERE profile_id = 1) ORDER BY created_at ASC').all().map(toResume)
+  return jobs.map((job) => ({ ...job, resumes: resumes.filter((resume) => resume.jobProfileId === job.id).map((resume) => ({ ...resume, role: job.title })) }))
+}
+
+export function createJobProfile(title) {
+  const timestamp = now()
+  const id = crypto.randomUUID()
+  const hasJobs = database.prepare('SELECT COUNT(*) AS count FROM job_profiles WHERE profile_id = 1').get().count > 0
+  database.prepare('INSERT INTO job_profiles (id, profile_id, title, sort_order, is_default, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?)').run(id, String(title || '').trim(), database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM job_profiles WHERE profile_id = 1').get().next, hasJobs ? 0 : 1, timestamp, timestamp)
+  return listJobProfiles().find((job) => job.id === id)
+}
+
+export function updateJobProfile(id, patch) {
+  const current = database.prepare('SELECT * FROM job_profiles WHERE id = ? AND profile_id = 1').get(id)
+  if (!current) return null
+  const title = String(patch.title ?? current.title).trim()
+  database.prepare('UPDATE job_profiles SET title = ?, updated_at = ? WHERE id = ?').run(title, now(), id)
+  if (patch.isDefault) database.prepare('UPDATE job_profiles SET is_default = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE profile_id = 1').run(id)
+  return listJobProfiles().find((job) => job.id === id)
+}
+
+export function deleteJobProfile(id) {
+  const current = database.prepare('SELECT * FROM job_profiles WHERE id = ? AND profile_id = 1').get(id)
+  if (!current) return false
+  database.prepare('DELETE FROM job_profiles WHERE id = ?').run(id)
+  const remaining = listJobProfiles()
+  if (current.is_default && remaining[0]) database.prepare('UPDATE job_profiles SET is_default = 1 WHERE id = ?').run(remaining[0].id)
+  return true
+}
+
+export function createResume(jobProfileId, data) {
+  const job = database.prepare('SELECT id FROM job_profiles WHERE id = ? AND profile_id = 1').get(jobProfileId)
+  if (!job) return null
+  const timestamp = now(); const id = crypto.randomUUID()
+  const hasResume = database.prepare('SELECT 1 FROM resumes WHERE job_profile_id = ? LIMIT 1').get(jobProfileId)
+  database.prepare('INSERT INTO resumes (id, job_profile_id, file_name, text, candidate_profile_json, parsed_at, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, jobProfileId, String(data.fileName || ''), String(data.text || ''), JSON.stringify(data.candidateProfile || {}), data.parsedAt || null, hasResume ? 0 : 1, timestamp, timestamp)
+  return listJobProfiles().flatMap((item) => item.resumes).find((resume) => resume.id === id)
+}
+
+export function updateResume(id, patch) {
+  const current = database.prepare('SELECT * FROM resumes WHERE id = ?').get(id)
+  if (!current) return null
+  database.prepare('UPDATE resumes SET file_name = ?, text = ?, candidate_profile_json = ?, parsed_at = ?, updated_at = ? WHERE id = ?').run(String(patch.fileName ?? current.file_name), String(patch.text ?? current.text), JSON.stringify(patch.candidateProfile ?? parseJson(current.candidate_profile_json, {})), patch.parsedAt ?? current.parsed_at, now(), id)
+  if (patch.isDefault) database.prepare('UPDATE resumes SET is_default = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE job_profile_id = ?').run(id, current.job_profile_id)
+  return listJobProfiles().flatMap((item) => item.resumes).find((resume) => resume.id === id)
+}
+
+export function deleteResume(id) {
+  const current = database.prepare('SELECT * FROM resumes WHERE id = ?').get(id)
+  if (!current) return false
+  database.prepare('DELETE FROM resumes WHERE id = ?').run(id)
+  if (current.is_default) { const replacement = database.prepare('SELECT id FROM resumes WHERE job_profile_id = ? ORDER BY created_at ASC LIMIT 1').get(current.job_profile_id); if (replacement) database.prepare('UPDATE resumes SET is_default = 1 WHERE id = ?').run(replacement.id) }
+  return true
+}
+
+function migrateLegacyJobProfiles() {
+  if (database.prepare('SELECT COUNT(*) AS count FROM job_profiles').get().count > 0) return
+  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get())
+  if (!profile) return
+  const roles = profile.targetRoles.length ? profile.targetRoles : (profile.resumeText ? ['通用'] : [])
+  const legacyResumes = profile.resumes || []
+  const usedResumeIds = new Set()
+  const roleResume = new Map()
+  for (const resume of legacyResumes) {
+    const role = String(resume.role || '').trim()
+    if (role && !roleResume.has(role)) roleResume.set(role, resume)
+  }
+  const hasRoleSpecificResume = roles.some((title) => roleResume.has(title))
+  for (const [index, title] of roles.entries()) {
+    const job = createJobProfile(title)
+    let resume = roleResume.get(title)
+    if (!resume && !hasRoleSpecificResume && index === 0 && profile.resumeText) resume = { fileName: profile.resumeFileName, text: profile.resumeText, candidateProfile: profile.candidateProfile, parsedAt: profile.parsedAt }
+    if (resume?.id) {
+      if (usedResumeIds.has(resume.id)) resume = null
+      else usedResumeIds.add(resume.id)
+    }
+    if (job && resume?.text) createResume(job.id, resume)
+  }
+}
+
+migrateLegacyJobProfiles()
+
+// Repair the only ambiguous legacy case we can prove: identical file/content copied
+// to several jobs while the legacy record names the intended role.
+function repairLegacyResumeDuplicates() {
+  if (database.prepare('SELECT 1 FROM profile_migrations WHERE key = ?').get('legacy_resume_dedup')) return
+  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get())
+  const roleByFingerprint = new Map()
+  for (const resume of profile?.resumes || []) {
+    if (!resume.role || !resume.text) continue
+    const fingerprint = `${resume.fileName}\n${resume.text}`
+    if (!roleByFingerprint.has(fingerprint)) roleByFingerprint.set(fingerprint, resume.role)
+  }
+  const rows = database.prepare(`SELECT resumes.id, resumes.file_name, resumes.text, job_profiles.title
+    FROM resumes JOIN job_profiles ON job_profiles.id = resumes.job_profile_id
+    WHERE job_profiles.profile_id = 1 ORDER BY resumes.created_at ASC`).all()
+  const groups = new Map()
+  for (const row of rows) {
+    const fingerprint = `${row.file_name}\n${row.text}`
+    if (!groups.has(fingerprint)) groups.set(fingerprint, [])
+    groups.get(fingerprint).push(row)
+  }
+  for (const [fingerprint, group] of groups) {
+    if (group.length < 2 || !roleByFingerprint.has(fingerprint)) continue
+    const intendedRole = roleByFingerprint.get(fingerprint)
+    const preferred = group.find((row) => row.title === intendedRole)
+    if (!preferred) continue
+    for (const duplicate of group) if (duplicate.id !== preferred.id) database.prepare('DELETE FROM resumes WHERE id = ?').run(duplicate.id)
+  }
+  database.prepare('INSERT OR IGNORE INTO profile_migrations (key, applied_at) VALUES (?, ?)').run('legacy_resume_dedup', now())
+}
+
+repairLegacyResumeDuplicates()
 
 export function updateProfile(patch) {
   const current = getProfile()
