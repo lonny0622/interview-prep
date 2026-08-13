@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { llmConfig, llmStatus } from './config/llm'
 import './App.css'
+import type { ResumeProfile, UserProfile } from './types/profile'
+import { ProfileResumePicker } from './components/profile/ProfileResumePicker'
 
 type Difficulty = '简单' | '中等' | '困难'
 type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
@@ -27,9 +29,6 @@ type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string;
 type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; referenceAnswer: string; followUps: string[] }
 type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
 type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
-type StructuredProfile = { candidate: { name: string; headline: string; yearsExperience: number; skills: string[]; experiences: Array<{ company: string; title: string; period: string; responsibilities: string[] }>; projects: Array<{ name: string; background: string; responsibilities: string[]; techStack: string[]; challenges: string[]; solutions: string[]; results: string[]; risks: string[] }>; sourceText?: string }; job: { role: string; responsibilities: string[]; requiredSkills: string[]; preferredExperience: string[]; interviewSignals: string[]; sourceText?: string }; gaps: string[] }
-type ResumeProfile = { id: string; role: string; fileName: string; text: string; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
-type UserProfile = { id: number; name: string; headline: string; yearsExperience: number; targetRoles: string[]; resumeText: string; resumeFileName: string; resumes: ResumeProfile[]; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -593,7 +592,7 @@ function App() {
     </div>
   }
 
-  const resumePicker = resumePickerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setResumePickerOpen(false) }}><section className="editor-modal resume-picker-modal" role="dialog" aria-modal="true" aria-labelledby="resume-picker-title"><div className="modal-header"><div><p className="eyebrow">Interview profile</p><h2 id="resume-picker-title">选择岗位与简历</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setResumePickerOpen(false)}><X size={18} /></button></div><div className="resume-picker-list">{(profile.resumes.length ? profile.resumes : [{ id: 'legacy-default', role: profile.targetRoles[0] || '通用', fileName: profile.resumeFileName || '个人简历', text: profile.resumeText }]).map((resume) => <button key={resume.id} type="button" className="resume-picker-item" onClick={() => applyResumeSelection(resume)}><strong>{resume.role}</strong><span>{resume.fileName || '未命名简历'}</span><ArrowRight size={14} /></button>)}</div></section></div>
+  const resumePicker = resumePickerOpen ? <ProfileResumePicker resumes={profile.resumes.length ? profile.resumes : [{ id: 'legacy-default', role: profile.targetRoles[0] || '通用', fileName: profile.resumeFileName || '个人简历', text: profile.resumeText }]} onSelect={applyResumeSelection} onClose={() => setResumePickerOpen(false)} /> : null
   const uploadRolePicker = pendingProfileResume && <div className="modal-backdrop" role="presentation"><section className="editor-modal resume-picker-modal" role="dialog" aria-modal="true" aria-labelledby="upload-role-title"><div className="modal-header"><div><p className="eyebrow">Resume profile</p><h2 id="upload-role-title">选择简历绑定岗位</h2></div><button className="icon-button" type="button" title="取消" onClick={() => setPendingProfileResume(null)}><X size={18} /></button></div><div className="resume-picker-list">{profileDraft.targetRoles.map((role) => <button key={role} type="button" className="resume-picker-item" onClick={() => { const file = pendingProfileResume; setPendingProfileResume(null); void uploadProfileResume(file, role) }}><strong>{role}</strong><span>{pendingProfileResume.name}</span><ArrowRight size={14} /></button>)}</div></section></div>
   return <div className="app-shell">
     <aside className="sidebar">
