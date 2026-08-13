@@ -155,6 +155,7 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileRoleInput, setProfileRoleInput] = useState('')
+  const [profileResumeRole, setProfileResumeRole] = useState('')
   const [profileResumeUpload, setProfileResumeUpload] = useState({ loading: false, error: '' })
   const [profileParsing, setProfileParsing] = useState(false)
   const [profileParseError, setProfileParseError] = useState('')
@@ -399,8 +400,7 @@ function App() {
       const response = await fetch('/api/resume/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) }) })
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '简历解析失败。')
       const roleOptions = profileDraft.targetRoles.length ? profileDraft.targetRoles : ['通用']
-      const selectedRole = roleOptions.length === 1 ? roleOptions[0] : window.prompt(`为「${file.name}」选择绑定岗位：\n${roleOptions.map((role, index) => `${index + 1}. ${role}`).join('\n')}`, roleOptions[0]) || roleOptions[0]
-      const role = roleOptions.includes(selectedRole) ? selectedRole : roleOptions[0]
+      const role = roleOptions.includes(profileResumeRole) ? profileResumeRole : roleOptions[0]
       const resume = { id: crypto.randomUUID(), role, fileName: file.name, text: payload.text }
       setProfileDraft((current) => ({ ...current, resumeText: payload.text, resumeFileName: file.name, resumes: [...current.resumes.filter((item) => item.role !== role), resume] }))
       setProfileResumeUpload({ loading: false, error: '' })
@@ -437,16 +437,14 @@ function App() {
     } catch (error) { setProfileParseError(error instanceof Error ? error.message : '资料解析失败。') } finally { setProfileParsing(false) }
   }
 
-  const openProfile = () => { setProfileDraft(profile); setProfileOpen(true) }
+  const openProfile = () => { setProfileDraft(profile); setProfileResumeRole(profile.targetRoles[0] || profile.resumes[0]?.role || '通用'); setProfileOpen(true) }
 
   const useProfileForInterview = () => {
     const resumes = profileDraft.resumes.length ? profileDraft.resumes : (profileDraft.resumeText ? [{ id: 'legacy-default', role: profileDraft.targetRoles[0] || '通用', fileName: profileDraft.resumeFileName, text: profileDraft.resumeText }] : [])
     if (!resumes.length && !profileDraft.targetRoles.length) return
-    const options = resumes.map((item, index) => `${index + 1}. ${item.role} · ${item.fileName || '未命名简历'}`).join('\n')
-    const selected = window.prompt(`选择用于模拟面试的岗位与简历：\n${options}`, '1')
-    const index = Math.max(0, Math.min(resumes.length - 1, Number(selected || 1) - 1))
-    const resume = resumes[index]
-    const role = resume?.role || String(profileDraft.targetRoles[0] || '')
+    const requestedRole = interviewSetup.role.trim()
+    const resume = resumes.find((item) => requestedRole && item.role === requestedRole) || resumes[0]
+    const role = resume?.role || requestedRole || String(profileDraft.targetRoles[0] || '')
     setInterviewSetup((current) => ({ ...current, role: current.role || role, resume: current.resume || resume?.text || profileDraft.resumeText, resumeId: resume?.id || '' }))
   }
 
