@@ -14,7 +14,7 @@
 
 ## LLM 配置占位
 
-暂时不需要提供 API key。复制 `.env.example` 为 `.env.local`，之后填入兼容 OpenAI Chat Completions 的服务地址、模型名和 key。当前前端只展示配置状态，不会在浏览器直接调用模型；正式接入时会增加服务端 `LLM Gateway`，避免 key 暴露。
+暂时不需要把 API key 发给我。复制 `.env.example` 为 `.env.local`，填入兼容 OpenAI Chat Completions 的服务地址和模型名；API key 使用不带 `VITE_` 前缀的 `LLM_API_KEY`，仅供未来服务端 `LLM Gateway` 使用。当前前端只展示 endpoint 配置状态，不会在浏览器直接调用模型。
 
 ## 开发
 

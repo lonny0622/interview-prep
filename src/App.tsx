@@ -271,7 +271,7 @@ function App() {
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
       <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
       <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button> })}</nav>
-      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{llmStatus ? `LLM 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
+      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
     <main className="main-content">
       {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
