@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
+import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -37,6 +37,7 @@ const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
+const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
 
 function jsonResponse(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -198,6 +199,38 @@ async function generateInterviewReport(session, turns) {
     return { ...fallback, ...extractObject(payload.choices?.[0]?.message?.content || '') }
   } catch (error) {
     console.warn(`Interview report fallback: ${error.message}`)
+    return fallback
+  }
+}
+
+function fallbackNextAction(session, answer) {
+  const current = session.blueprint[session.currentIndex]
+  const normalized = answer.trim()
+  const hasWeakSignal = normalized.length < 45 || !/[0-9%]|结果|指标|影响|负责/.test(normalized)
+  const followUp = current?.followUps?.[0]
+  if (followUp && hasWeakSignal && session.currentIndex < session.blueprint.length - 1) return { action: 'follow_up', reason: '回答较短或缺少具体结果，需要继续核实。', question: followUp, kind: '发散追问', focus: current.focus, referenceAnswer: current.referenceAnswer }
+  if (session.currentIndex >= session.blueprint.length - 1) return { action: 'finish', reason: '已覆盖面试蓝图中的全部环节。', question: '', kind: '结束', focus: '', referenceAnswer: '' }
+  return { action: 'advance_stage', reason: '当前环节已完成，进入下一阶段。', question: '', kind: '进入下一阶段', focus: '', referenceAnswer: '' }
+}
+
+async function decideNextAction(session, answer) {
+  const fallback = fallbackNextAction(session, answer)
+  if (!baseUrl || !model || !apiKey) return fallback
+  try {
+    const current = session.blueprint[session.currentIndex]
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.2, max_tokens: 700, messages: [
+      { role: 'system', content: `你是模拟面试编排 Agent。只能输出 JSON，不要代码围栏。${nextActionSchema}。只允许 follow_up、advance_stage、finish。当前阶段未完成时不能 finish；最多只生成一个追问；追问必须基于当前回答，不得编造候选人经历。` },
+      { role: 'user', content: JSON.stringify({ current, answer, currentIndex: session.currentIndex, total: session.blueprint.length }) },
+    ] }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error?.message || `Agent 请求失败（${response.status}）。`)
+    const value = extractObject(payload.choices?.[0]?.message?.content || '')
+    if (!['follow_up', 'advance_stage', 'finish'].includes(value.action)) throw new Error('Agent action 不合法。')
+    if (value.action === 'follow_up' && !String(value.question || '').trim()) throw new Error('Agent 追问为空。')
+    if (value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1) value.action = 'finish'
+    return { ...fallback, ...value, question: String(value.question || '').trim(), referenceAnswer: String(value.referenceAnswer || '').trim() }
+  } catch (error) {
+    console.warn(`Interview next action fallback: ${error.message}`)
     return fallback
   }
 }
@@ -398,6 +431,23 @@ async function handle(request, response) {
       return jsonResponse(response, 201, { turn: saveInterviewTurn(id, { stage: body.stage || 'knowledge', question: body.question, answerText: body.answerText }, score) })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '面试回答保存失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/next-action$/)) {
+    try {
+      const id = request.url.split('/')[3]
+      const session = getInterviewSession(id)
+      if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
+      const body = JSON.parse(await readBody(request, 2_000_000))
+      if (typeof body.answerText !== 'string' || !body.answerText.trim()) return jsonResponse(response, 400, { error: 'answerText 必填。' })
+      const action = await decideNextAction(session, body.answerText)
+      let nextSession = session
+      if (action.action === 'follow_up') {
+        nextSession = insertInterviewFollowUp(id, { stage: session.stage, kind: action.kind || '发散追问', question: action.question, focus: action.focus || session.blueprint[session.currentIndex]?.focus || '', referenceAnswer: action.referenceAnswer || '', followUps: [] }) || session
+      }
+      return jsonResponse(response, 200, { action, session: nextSession })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '下一步面试动作生成失败。' })
     }
   }
   if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/complete$/)) {

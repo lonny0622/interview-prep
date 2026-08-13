@@ -387,13 +387,16 @@ function App() {
       if (!response.ok) throw new Error(payload.error || '回答保存失败。')
       const next = { ...interview.session, currentIndex: Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1), stage: interview.session.blueprint[Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1)]?.stage || current.stage }
       const nextTurns = [...interview.turns, payload.turn]
-      if (interview.session.currentIndex === interview.session.blueprint.length - 1) {
+      const actionResponse = await fetch(`/api/interview-sessions/${interview.session.id}/next-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerText: interview.answer }) })
+      const actionPayload = await actionResponse.json()
+      if (!actionResponse.ok) throw new Error(actionPayload.error || '下一步面试动作生成失败。')
+      if (actionPayload.action.action === 'finish') {
         const reviewResponse = await fetch(`/api/interview-sessions/${interview.session.id}/complete`, { method: 'POST' })
         const reviewPayload = await reviewResponse.json()
         if (!reviewResponse.ok) throw new Error(reviewPayload.error || '复盘生成失败。')
         setInterview({ ...interview, session: reviewPayload.session, turns: nextTurns, answer: '', loading: false, completing: false, report: reviewPayload.report, error: '' })
       } else {
-        setInterview({ ...interview, session: next, turns: nextTurns, answer: '', loading: false, completing: false, report: null, error: '' })
+        setInterview({ ...interview, session: actionPayload.session || next, turns: nextTurns, answer: '', loading: false, completing: false, report: null, error: '' })
       }
       setInterviewVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
     } catch (error) {

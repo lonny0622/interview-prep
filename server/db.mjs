@@ -197,6 +197,15 @@ export function listInterviewTurns(sessionId) {
   return database.prepare('SELECT * FROM interview_turns WHERE session_id = ? ORDER BY created_at ASC').all(sessionId).map((row) => ({ id: row.id, sessionId: row.session_id, stage: row.stage, question: row.question, answerText: row.answer_text, score: row.score_json ? JSON.parse(row.score_json) : null, createdAt: row.created_at }))
 }
 
+export function insertInterviewFollowUp(sessionId, item) {
+  const session = getInterviewSession(sessionId)
+  if (!session) return null
+  const blueprint = [...session.blueprint]
+  blueprint.splice(session.currentIndex, 0, item)
+  database.prepare('UPDATE interview_sessions SET blueprint = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(blueprint), now(), sessionId)
+  return getInterviewSession(sessionId)
+}
+
 export function seedQuestionsIfEmpty() {
   if (database.prepare('SELECT COUNT(*) AS count FROM questions').get().count > 0) return
   createQuestions([
