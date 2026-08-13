@@ -16,6 +16,8 @@
 
 暂时不需要把 API key 发给我。复制 `.env.example` 为 `.env.local`，填入兼容 OpenAI Chat Completions 的服务地址和模型名；API key 使用不带 `VITE_` 前缀的 `LLM_API_KEY`，仅供未来服务端 `LLM Gateway` 使用。当前前端只展示 endpoint 配置状态，不会在浏览器直接调用模型。
 
+批量导入可以单独配置低延迟模型：`LLM_IMPORT_MODEL=gpt-5.4-mini`。默认模型继续用于后续评分和面试复盘，导入任务不必占用高推理模型。
+
 ## 开发
 
 ```bash
