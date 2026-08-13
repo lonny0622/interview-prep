@@ -12,6 +12,10 @@
 
 当前数据保存在浏览器 `localStorage`，还未接入服务端数据库和 LLM。
 
+## LLM 配置占位
+
+暂时不需要提供 API key。复制 `.env.example` 为 `.env.local`，之后填入兼容 OpenAI Chat Completions 的服务地址、模型名和 key。当前前端只展示配置状态，不会在浏览器直接调用模型；正式接入时会增加服务端 `LLM Gateway`，避免 key 暴露。
+
 ## 开发
 
 ```bash

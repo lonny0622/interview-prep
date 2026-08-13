@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, BookOpen, BrainCircuit, ChevronDown, ChevronUp, CircleDot, FilePenLine, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, ChevronUp, CircleDot, FilePenLine, FileUp, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { llmConfig, llmStatus } from './config/llm'
 import './App.css'
 
 type Difficulty = '简单' | '中等' | '困难'
@@ -71,6 +72,47 @@ const navItems = [
 
 const emptyDraft: QuestionDraft = { title: '', category: '', difficulty: '中等', importance: 3, answer: '', explanation: '', interviewAnswer: '', followUps: [] }
 
+const masteryOrder: Mastery[] = ['未学习', '了解', '熟悉', '掌握']
+
+function parseImportedQuestions(source: string): QuestionDraft[] {
+  const trimmed = source.trim()
+  if (!trimmed) return []
+  try {
+    const parsed = JSON.parse(trimmed)
+    const items = Array.isArray(parsed) ? parsed : parsed.questions
+    if (!Array.isArray(items)) throw new Error('JSON 顶层需要是数组，或包含 questions 数组。')
+    return items.map((item) => ({
+      title: String(item.title ?? item.question ?? '').trim(),
+      category: String(item.category ?? '未分类').trim(),
+      difficulty: (['简单', '中等', '困难'].includes(item.difficulty) ? item.difficulty : '中等') as Difficulty,
+      importance: Math.min(5, Math.max(1, Number(item.importance) || 3)),
+      answer: String(item.answer ?? item.answer_md ?? '').trim(),
+      explanation: String(item.explanation ?? item.explanation_md ?? '').trim(),
+      interviewAnswer: String(item.interviewAnswer ?? item.interview_answer ?? '').trim(),
+      followUps: Array.isArray(item.followUps ?? item.follow_up_questions) ? (item.followUps ?? item.follow_up_questions).map(String).filter(Boolean) : [],
+    })).filter((item) => item.title)
+  } catch (error) {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) throw error
+  }
+
+  return trimmed.split(/\n(?=---\s*$|##\s+)/gm).map((block) => {
+    const title = block.match(/^##\s+(.+)$/m)?.[1]?.trim() ?? block.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? ''
+    const value = (label: string) => block.match(new RegExp(`^${label}[:：]\\s*(.+)$`, 'mi'))?.[1]?.trim() ?? ''
+    const section = (heading: string) => block.match(new RegExp(`###\\s+${heading}\\s*\\n([\\s\\S]*?)(?=\\n###|$)`, 'i'))?.[1]?.trim() ?? ''
+    const followUps = section('发散问题').split('\n').map((line) => line.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+    return {
+      title,
+      category: value('分类') || '未分类',
+      difficulty: (['简单', '中等', '困难'].includes(value('难度')) ? value('难度') : '中等') as Difficulty,
+      importance: Math.min(5, Math.max(1, Number(value('重要性')) || 3)),
+      answer: section('答案'),
+      explanation: section('详细解析|解析'),
+      interviewAnswer: section('面试时建议的回答|建议回答'),
+      followUps,
+    }
+  }).filter((item) => item.title)
+}
+
 function App() {
   const [questions, setQuestions] = useState<Question[]>(() => {
     try {
@@ -87,6 +129,9 @@ function App() {
   const [selectedId, setSelectedId] = useState(seedQuestions[0].id)
   const [showAnswer, setShowAnswer] = useState(false)
   const [editor, setEditor] = useState<{ mode: 'create' | 'edit'; draft: QuestionDraft } | null>(null)
+  const [importer, setImporter] = useState<{ step: 'input' | 'preview'; source: string; drafts: QuestionDraft[]; error: string } | null>(null)
+  const [learningIndex, setLearningIndex] = useState(0)
+  const [learningReveal, setLearningReveal] = useState(false)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(questions))
@@ -134,6 +179,38 @@ function App() {
     setSelectedId(nextQuestions[0]?.id ?? '')
   }
 
+  const learningQuestions = useMemo(() => [...questions].sort((a, b) => {
+    const masteryDelta = masteryOrder.indexOf(a.mastery) - masteryOrder.indexOf(b.mastery)
+    return masteryDelta || b.importance - a.importance
+  }), [questions])
+
+  const importPreview = () => {
+    if (!importer) return
+    try {
+      const drafts = parseImportedQuestions(importer.source)
+      if (!drafts.length) throw new Error('没有解析到有效题目，请检查格式。')
+      setImporter({ ...importer, step: 'preview', drafts, error: '' })
+    } catch (error) {
+      setImporter({ ...importer, error: error instanceof Error ? error.message : '导入内容无法解析。' })
+    }
+  }
+
+  const confirmImport = () => {
+    if (!importer?.drafts.length) return
+    const imported = importer.drafts.map((draft) => ({ ...draft, id: crypto.randomUUID(), mastery: '未学习' as Mastery }))
+    setQuestions((current) => [...imported, ...current])
+    setSelectedId(imported[0].id)
+    setImporter(null)
+  }
+
+  const markLearning = (nextMastery: Mastery) => {
+    const current = learningQuestions[learningIndex]
+    if (!current) return
+    setQuestions((items) => items.map((item) => item.id === current.id ? { ...item, mastery: nextMastery } : item))
+    setLearningReveal(false)
+    if (learningIndex < learningQuestions.length - 1) setLearningIndex((index) => index + 1)
+  }
+
   const renderLibrary = () => (
     <>
       <header className="page-header">
@@ -156,7 +233,7 @@ function App() {
         <label className="search-box"><Search size={14} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索问题或关键词" /></label>
         <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={mastery} onChange={(event) => setMastery(event.target.value)}>{['全部掌握度', '未学习', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select>
-        <button className="quiet-button" type="button">批量导入</button>
+        <button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', drafts: [], error: '' })}><Upload size={13} />批量导入</button>
       </div>
       <div className="library-layout">
         <section className="question-list" aria-label="面试题列表">
@@ -180,15 +257,24 @@ function App() {
     </>
   )
 
+  const renderLearning = () => {
+    const current = learningQuestions[learningIndex]
+    if (!current) return <div className="placeholder-page"><p className="eyebrow">Learning session</p><h1>今天没有待学习题目</h1><p>题库里的题目都已经标记为掌握，可以回到题库继续补充内容。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>
+    return <div className="learning-page">
+      <header className="page-header learning-header"><div><p className="eyebrow">Interview workspace / 02</p><h1>学习</h1><p className="page-description">按掌握程度从薄弱处开始，答完再看解析。</p></div><div className="learning-progress"><strong>{learningIndex + 1}</strong><span>/ {learningQuestions.length} 道</span></div></header>
+      <div className="learning-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2><div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div><div className="learning-answer">{learningReveal ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.interviewAnswer}</ReactMarkdown></div> : <button className="reveal-button" type="button" onClick={() => setLearningReveal(true)}>查看答案与解析 <ChevronDown size={14} /></button>}</div><div className="learning-actions"><button className="quiet-button" type="button" disabled={learningIndex === 0} onClick={() => { setLearningIndex((index) => index - 1); setLearningReveal(false) }}><ArrowLeft size={13} />上一题</button><div>{masteryOrder.map((item) => <button key={item} className={`mastery-chip ${current.mastery === item ? 'selected' : ''}`} type="button" onClick={() => markLearning(item)}>{item}</button>)}</div><button className="primary-button" type="button" onClick={() => { if (learningIndex < learningQuestions.length - 1) { setLearningIndex((index) => index + 1); setLearningReveal(false) } else setActiveNav('library') }}>下一题 <ArrowRight size={13} /></button></div></div>
+    </div>
+  }
+
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
       <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
       <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button> })}</nav>
-      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />本地数据已保存</div></div>
+      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{llmStatus ? `LLM 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
     <main className="main-content">
-      {activeNav === 'library' ? renderLibrary() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
+      {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
     </main>
     {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
@@ -206,6 +292,7 @@ function App() {
         <div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setEditor(null)}>取消</button><button className="primary-button" type="button" disabled={!editor.draft.title.trim() || !editor.draft.category.trim()} onClick={saveQuestion}>保存题目</button></div>
       </section>
     </div>}
+    {importer && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setImporter(null) }}><section className="editor-modal import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-header"><div><p className="eyebrow">Question import</p><h2 id="import-title">{importer.step === 'input' ? '批量导入题目' : '确认导入内容'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setImporter(null)}><X size={18} /></button></div>{importer.step === 'input' ? <><div className="import-hint"><FileUp size={20} /><div><strong>粘贴 JSON 或 Markdown</strong><p>支持题目数组 JSON，或用二级标题分隔的 Markdown 题目块。解析后会先预览，不会直接修改题库。</p></div></div><textarea className="import-textarea" value={importer.source} onChange={(event) => setImporter({ ...importer, source: event.target.value, error: '' })} placeholder={'示例：\n[{"title":"什么是闭包？","category":"JavaScript","difficulty":"中等","answer":"..."}]'} />{importer.error && <p className="form-error">{importer.error}</p>}<div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setImporter(null)}>取消</button><button className="primary-button" type="button" onClick={importPreview}>解析并预览 <ArrowRight size={13} /></button></div></> : <><div className="import-summary"><Check size={16} /> 已解析 {importer.drafts.length} 道题目，确认后加入题库</div><div className="import-preview-list">{importer.drafts.map((draft, index) => <div key={`${draft.title}-${index}`}><strong>{draft.title}</strong><span>{draft.category} · {draft.difficulty} · 重要性 {draft.importance}/5</span></div>)}</div><div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setImporter({ ...importer, step: 'input' })}><ArrowLeft size={13} />返回修改</button><button className="primary-button" type="button" onClick={confirmImport}>确认导入 <Check size={13} /></button></div></>}</section></div>}
   </div>
 }
 
