@@ -1,32 +1,31 @@
-# React + TypeScript + Vite
+# InterviewPrep
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+为个人求职准备使用的面试题库与模拟面试应用。项目独立于 SecondBrain 主仓库维护，当前以单用户、本地优先的 Web 版本为主。
 
-Currently, two official plugins are available:
+## 当前进度
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 题库工作台：搜索、分类/掌握度筛选、题目详情
+- 手动新建和编辑题目
+- 答案、解析和面试建议支持 Markdown
+- 掌握程度记录和本地持久化
+- 移动端底部导航与响应式布局
 
-## React Compiler
+当前数据保存在浏览器 `localStorage`，还未接入服务端数据库和 LLM。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 开发
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+pnpm install
+pnpm dev
+pnpm build
+pnpm lint
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## 计划
+
+1. 题库导入、版本管理与 PostgreSQL 数据层
+2. 学习 session、刷题流程和结构化评分
+3. 简历/JD 解析、项目题/场景题/发散题问题池
+4. 流式 STT/TTS、语音打断和模拟面试复盘
+
+产品设计文档位于 SecondBrain 的 `JobHunting/03-面试准备/06-模拟面试/面试准备应用技术方案.md`。

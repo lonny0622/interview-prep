@@ -1,4 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowRight, BookOpen, BrainCircuit, ChevronDown, ChevronUp, CircleDot, FilePenLine, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 type Difficulty = '简单' | '中等' | '困难'
@@ -16,6 +19,9 @@ type Question = {
   interviewAnswer: string
   followUps: string[]
 }
+
+type QuestionDraft = Omit<Question, 'id' | 'mastery'>
+const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
   {
@@ -57,20 +63,34 @@ const seedQuestions: Question[] = [
 ]
 
 const navItems = [
-  { id: 'library', label: '题库', icon: '▤' },
-  { id: 'learning', label: '学习', icon: '◒' },
-  { id: 'practice', label: '刷题', icon: '◇' },
-  { id: 'interview', label: '模拟面试', icon: '◉' },
+  { id: 'library', label: '题库', icon: BookOpen },
+  { id: 'learning', label: '学习', icon: BrainCircuit },
+  { id: 'practice', label: '刷题', icon: CircleDot },
+  { id: 'interview', label: '模拟面试', icon: Mic2 },
 ]
 
+const emptyDraft: QuestionDraft = { title: '', category: '', difficulty: '中等', importance: 3, answer: '', explanation: '', interviewAnswer: '', followUps: [] }
+
 function App() {
-  const [questions, setQuestions] = useState(seedQuestions)
+  const [questions, setQuestions] = useState<Question[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      return saved ? JSON.parse(saved) : seedQuestions
+    } catch {
+      return seedQuestions
+    }
+  })
   const [activeNav, setActiveNav] = useState('library')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('全部分类')
   const [mastery, setMastery] = useState('全部掌握度')
   const [selectedId, setSelectedId] = useState(seedQuestions[0].id)
   const [showAnswer, setShowAnswer] = useState(false)
+  const [editor, setEditor] = useState<{ mode: 'create' | 'edit'; draft: QuestionDraft } | null>(null)
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(questions))
+  }, [questions])
 
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set(questions.map((question) => question.category))]
@@ -88,6 +108,32 @@ function App() {
     setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, mastery: nextMastery } : question))
   }
 
+  const openEditor = (question?: Question) => {
+    setEditor(question ? {
+      mode: 'edit',
+      draft: { title: question.title, category: question.category, difficulty: question.difficulty, importance: question.importance, answer: question.answer, explanation: question.explanation, interviewAnswer: question.interviewAnswer, followUps: question.followUps },
+    } : { mode: 'create', draft: emptyDraft })
+  }
+
+  const saveQuestion = () => {
+    if (!editor || !editor.draft.title.trim() || !editor.draft.category.trim()) return
+    if (editor.mode === 'edit') {
+      setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, ...editor.draft } : question))
+    } else {
+      const nextQuestion: Question = { ...editor.draft, id: crypto.randomUUID(), mastery: '未学习' }
+      setQuestions((current) => [nextQuestion, ...current])
+      setSelectedId(nextQuestion.id)
+    }
+    setEditor(null)
+  }
+
+  const deleteQuestion = () => {
+    if (!selected || !window.confirm('确认删除这道题目？此操作无法撤销。')) return
+    const nextQuestions = questions.filter((question) => question.id !== selected.id)
+    setQuestions(nextQuestions)
+    setSelectedId(nextQuestions[0]?.id ?? '')
+  }
+
   const renderLibrary = () => (
     <>
       <header className="page-header">
@@ -96,8 +142,8 @@ function App() {
           <h1>题库</h1>
           <p className="page-description">把准备过的内容沉淀成可以反复练习的题目。</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => setSelectedId('new')}>
-          <span aria-hidden="true">＋</span> 新建题目
+        <button className="primary-button" type="button" onClick={() => openEditor()}>
+          <Plus size={14} aria-hidden="true" /> 新建题目
         </button>
       </header>
       <div className="stats-row">
@@ -107,14 +153,14 @@ function App() {
         <div><span>掌握度</span><strong>34%</strong></div>
       </div>
       <div className="toolbar">
-        <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索问题或关键词" /></label>
+        <label className="search-box"><Search size={14} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索问题或关键词" /></label>
         <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={mastery} onChange={(event) => setMastery(event.target.value)}>{['全部掌握度', '未学习', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select>
         <button className="quiet-button" type="button">批量导入</button>
       </div>
       <div className="library-layout">
         <section className="question-list" aria-label="面试题列表">
-          <div className="list-heading"><span>{filteredQuestions.length} 道题目</span><button className="icon-button" type="button" title="排序">↕</button></div>
+          <div className="list-heading"><span>{filteredQuestions.length} 道题目</span><button className="icon-button" type="button" title="筛选题目"><ListFilter size={14} /></button></div>
           {filteredQuestions.map((question) => <button key={question.id} className={`question-item ${question.id === selectedId ? 'active' : ''}`} type="button" onClick={() => { setSelectedId(question.id); setShowAnswer(false) }}>
             <span className="question-item-title">{question.title}</span>
             <span className="question-item-meta"><span>{question.category}</span><span className={`difficulty ${question.difficulty}`}>{question.difficulty}</span><span className="mastery-dot" data-level={question.mastery} />{question.mastery}</span>
@@ -122,12 +168,12 @@ function App() {
         </section>
         <section className="question-detail">
           {selected ? <>
-            <div className="detail-topline"><span className="tag">{selected.category}</span><span className={`difficulty ${selected.difficulty}`}>{selected.difficulty}</span><span className="importance">重要性 {selected.importance}/5</span><button className="icon-button" type="button" title="更多操作">•••</button></div>
+            <div className="detail-topline"><span className="tag">{selected.category}</span><span className={`difficulty ${selected.difficulty}`}>{selected.difficulty}</span><span className="importance">重要性 {selected.importance}/5</span><button className="icon-button" type="button" title="更多操作"><MoreHorizontal size={16} /></button></div>
             <h2>{selected.title}</h2>
             <div className="detail-section"><p className="section-label">掌握程度</p><div className="mastery-control">{(['未学习', '了解', '熟悉', '掌握'] as Mastery[]).map((item) => <button key={item} className={selected.mastery === item ? 'selected' : ''} type="button" onClick={() => updateMastery(item)}>{item}</button>)}</div></div>
-            <div className="detail-section answer-section"><div className="section-heading"><p className="section-label">答案与解析</p><button className="text-button" type="button" onClick={() => setShowAnswer((value) => !value)}>{showAnswer ? '隐藏答案' : '展示答案'} <span aria-hidden="true">{showAnswer ? '⌃' : '⌄'}</span></button></div>{showAnswer ? <div className="answer-content"><p>{selected.answer}</p><h3>详细解析</h3><p>{selected.explanation}</p><h3>面试时建议的回答</h3><p>{selected.interviewAnswer}</p></div> : <div className="answer-locked"><span aria-hidden="true">◌</span><p>先尝试自己回答，再查看答案和解析</p><button className="secondary-button" type="button" onClick={() => setShowAnswer(true)}>查看答案</button></div>}</div>
-            <div className="detail-section"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">可选</span></div><ul className="follow-ups">{selected.followUps.map((followUp) => <li key={followUp}>{followUp}<span aria-hidden="true">→</span></li>)}</ul></div>
-            <div className="detail-actions"><button className="quiet-button" type="button">编辑题目</button><button className="primary-button" type="button" onClick={() => setActiveNav('practice')}>开始练习 <span aria-hidden="true">→</span></button></div>
+            <div className="detail-section answer-section"><div className="section-heading"><p className="section-label">答案与解析</p><button className="text-button" type="button" onClick={() => setShowAnswer((value) => !value)}>{showAnswer ? '隐藏答案' : '展示答案'} {showAnswer ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button></div>{showAnswer ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.interviewAnswer}</ReactMarkdown></div> : <div className="answer-locked"><Sparkles size={18} aria-hidden="true" /><p>先尝试自己回答，再查看答案和解析</p><button className="secondary-button" type="button" onClick={() => setShowAnswer(true)}>查看答案</button></div>}</div>
+            <div className="detail-section"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">可选</span></div><ul className="follow-ups">{selected.followUps.map((followUp) => <li key={followUp}>{followUp}<ArrowRight size={13} aria-hidden="true" /></li>)}</ul></div>
+            <div className="detail-actions"><button className="danger-button" type="button" onClick={deleteQuestion}><Trash2 size={13} />删除</button><button className="quiet-button" type="button" onClick={() => openEditor(selected)}><FilePenLine size={13} />编辑题目</button><button className="primary-button" type="button" onClick={() => setActiveNav('practice')}>开始练习 <ArrowRight size={13} /></button></div>
           </> : <div className="empty-state">从左侧选择一道题目开始</div>}
         </section>
       </div>
@@ -137,13 +183,29 @@ function App() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
-      <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料">⌄</button></div>
-      <nav>{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button>)}</nav>
-      <div className="sidebar-bottom"><button type="button"><span aria-hidden="true">⚙</span>设置</button><div className="sync-status"><span />本地数据已同步</div></div>
+      <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
+      <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button> })}</nav>
+      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />本地数据已保存</div></div>
     </aside>
     <main className="main-content">
-      {activeNav === 'library' ? renderLibrary() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <span aria-hidden="true">→</span></button></div>}
+      {activeNav === 'library' ? renderLibrary() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
     </main>
+    {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
+      <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+        <div className="modal-header"><div><p className="eyebrow">Question editor</p><h2 id="editor-title">{editor.mode === 'create' ? '新建题目' : '编辑题目'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setEditor(null)}><X size={18} /></button></div>
+        <div className="editor-grid">
+          <label className="full-field"><span>问题</span><textarea rows={3} value={editor.draft.title} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, title: event.target.value } })} placeholder="输入面试问题" /></label>
+          <label><span>分类</span><input value={editor.draft.category} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, category: event.target.value } })} placeholder="例如 React" /></label>
+          <label><span>难度</span><select value={editor.draft.difficulty} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, difficulty: event.target.value as Difficulty } })}><option>简单</option><option>中等</option><option>困难</option></select></label>
+          <label><span>重要性</span><input type="number" min="1" max="5" value={editor.draft.importance} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, importance: Number(event.target.value) } })} /></label>
+          <label className="full-field"><span>答案（Markdown）</span><textarea rows={5} value={editor.draft.answer} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, answer: event.target.value } })} /></label>
+          <label className="full-field"><span>详细解析（Markdown）</span><textarea rows={5} value={editor.draft.explanation} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, explanation: event.target.value } })} /></label>
+          <label className="full-field"><span>面试时建议的回答</span><textarea rows={4} value={editor.draft.interviewAnswer} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, interviewAnswer: event.target.value } })} /></label>
+          <label className="full-field"><span>发散问题（每行一个）</span><textarea rows={3} value={editor.draft.followUps.join('\n')} onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, followUps: event.target.value.split('\n').filter(Boolean) } })} /></label>
+        </div>
+        <div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setEditor(null)}>取消</button><button className="primary-button" type="button" disabled={!editor.draft.title.trim() || !editor.draft.category.trim()} onClick={saveQuestion}>保存题目</button></div>
+      </section>
+    </div>}
   </div>
 }
 
