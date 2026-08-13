@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, join } from 'node:path'
 import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -53,6 +53,48 @@ function readBody(request, limit = 1_000_000) {
     request.on('end', () => resolveBody(body))
     request.on('error', reject)
   })
+}
+
+function extractDocxText(binary) {
+  const tempDir = mkdtempSync(join(rootDir, '.resume-'))
+  const inputPath = join(tempDir, 'resume.docx')
+  writeFileSync(inputPath, binary)
+  const unzip = spawn('unzip', ['-p', inputPath, 'word/document.xml'])
+  return new Promise((resolveText, rejectText) => {
+      const output = []; const errors = []
+      unzip.stdout.on('data', (chunk) => output.push(chunk)); unzip.stderr.on('data', (chunk) => errors.push(chunk))
+      unzip.on('error', rejectText)
+      unzip.on('close', (code) => {
+        if (code !== 0) { rmSync(tempDir, { recursive: true, force: true }); return rejectText(new Error(`DOCX 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`)) }
+        const xml = Buffer.concat(output).toString('utf8')
+        rmSync(tempDir, { recursive: true, force: true })
+        resolveText(xml.replace(/<w:tab\s*\/?>(\s*)/g, '\t').replace(/<w:br\s*\/?>(\s*)/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+\n/g, '\n').trim())
+      })
+  })
+}
+
+function extractPdfText(binary) {
+  const tempDir = mkdtempSync(join(rootDir, '.resume-'))
+  const inputPath = join(tempDir, 'resume.pdf')
+  writeFileSync(inputPath, binary)
+  return new Promise((resolveText, rejectText) => {
+    const process = spawn('textutil', ['-convert', 'txt', '-stdout', inputPath])
+    const output = []; const errors = []
+    process.stdout.on('data', (chunk) => output.push(chunk)); process.stderr.on('data', (chunk) => errors.push(chunk))
+    process.on('close', (code) => {
+      rmSync(tempDir, { recursive: true, force: true })
+      if (code === 0) resolveText(Buffer.concat(output).toString('utf8').trim())
+      else rejectText(new Error(`PDF 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`))
+    })
+  })
+}
+
+async function extractResumeText(binary, fileName, mimeType) {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return extractDocxText(binary)
+  if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return extractPdfText(binary)
+  if (lower.endsWith('.doc') || mimeType === 'application/msword') throw new Error('暂不支持旧版 .doc，请另存为 .docx 或 PDF 后上传。')
+  throw new Error('仅支持 .docx 和 .pdf 简历文件。')
 }
 
 function convertToWav(binary, mimeType) {
@@ -323,6 +365,17 @@ async function handle(request, response) {
       return jsonResponse(response, 201, { session: createInterviewSession(body.profile, blueprint) })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/resume/extract') {
+    try {
+      const body = JSON.parse(await readBody(request, 12_000_000))
+      if (typeof body.fileBase64 !== 'string' || !body.fileBase64.trim()) return jsonResponse(response, 400, { error: 'fileBase64 不能为空。' })
+      const text = await extractResumeText(Buffer.from(body.fileBase64, 'base64'), String(body.fileName || ''), String(body.mimeType || ''))
+      if (!text) return jsonResponse(response, 422, { error: '文档中没有提取到文本，请改用粘贴文本。' })
+      return jsonResponse(response, 200, { text: text.slice(0, 80_000), fileName: body.fileName })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '简历解析失败。' })
     }
   }
   if (request.method === 'GET' && request.url.startsWith('/api/interview-sessions/')) {
