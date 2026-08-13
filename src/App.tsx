@@ -28,7 +28,8 @@ type InterviewBlueprintItem = { stage: string; kind: string; question: string; f
 type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
 type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
 type StructuredProfile = { candidate: { name: string; headline: string; yearsExperience: number; skills: string[]; experiences: Array<{ company: string; title: string; period: string; responsibilities: string[] }>; projects: Array<{ name: string; background: string; responsibilities: string[]; techStack: string[]; challenges: string[]; solutions: string[]; results: string[]; risks: string[] }>; sourceText?: string }; job: { role: string; responsibilities: string[]; requiredSkills: string[]; preferredExperience: string[]; interviewSignals: string[]; sourceText?: string }; gaps: string[] }
-type UserProfile = { id: number; name: string; headline: string; yearsExperience: number; targetRoles: string[]; resumeText: string; resumeFileName: string; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
+type ResumeProfile = { id: string; role: string; fileName: string; text: string; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
+type UserProfile = { id: number; name: string; headline: string; yearsExperience: number; targetRoles: string[]; resumeText: string; resumeFileName: string; resumes: ResumeProfile[]; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -145,11 +146,11 @@ function App() {
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
-  const [interviewSetup, setInterviewSetup] = useState({ role: '', company: '', jd: '', resume: '', duration: '30 分钟', difficulty: '中等' })
+  const [interviewSetup, setInterviewSetup] = useState({ role: '', company: '', jd: '', resume: '', resumeId: '', duration: '30 分钟', difficulty: '中等' })
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
   const [resumeUpload, setResumeUpload] = useState({ loading: false, fileName: '', error: '' })
   const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
-  const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', candidateProfile: null, parsedAt: null })
+  const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null })
   const [profileDraft, setProfileDraft] = useState<UserProfile>(profile)
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
@@ -397,7 +398,11 @@ function App() {
       for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
       const response = await fetch('/api/resume/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) }) })
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '简历解析失败。')
-      setProfileDraft((current) => ({ ...current, resumeText: payload.text, resumeFileName: file.name }))
+      const roleOptions = profileDraft.targetRoles.length ? profileDraft.targetRoles : ['通用']
+      const selectedRole = roleOptions.length === 1 ? roleOptions[0] : window.prompt(`为「${file.name}」选择绑定岗位：\n${roleOptions.map((role, index) => `${index + 1}. ${role}`).join('\n')}`, roleOptions[0]) || roleOptions[0]
+      const role = roleOptions.includes(selectedRole) ? selectedRole : roleOptions[0]
+      const resume = { id: crypto.randomUUID(), role, fileName: file.name, text: payload.text }
+      setProfileDraft((current) => ({ ...current, resumeText: payload.text, resumeFileName: file.name, resumes: [...current.resumes.filter((item) => item.role !== role), resume] }))
       setProfileResumeUpload({ loading: false, error: '' })
     } catch (error) { setProfileResumeUpload({ loading: false, error: error instanceof Error ? error.message : '简历解析失败。' }) }
   }
@@ -424,7 +429,7 @@ function App() {
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '资料解析失败。')
       const structured = payload.profile as StructuredProfile
       const candidate = structured.candidate
-      const next = { ...profileDraft, name: profileDraft.name || candidate.name, headline: profileDraft.headline || candidate.headline, yearsExperience: profileDraft.yearsExperience || candidate.yearsExperience, candidateProfile: structured, parsedAt: new Date().toISOString() }
+      const next = { ...profileDraft, name: profileDraft.name || candidate.name, headline: profileDraft.headline || candidate.headline, yearsExperience: profileDraft.yearsExperience || candidate.yearsExperience, candidateProfile: structured, parsedAt: new Date().toISOString(), resumes: profileDraft.resumes.map((item) => item.text === profileDraft.resumeText ? { ...item, candidateProfile: structured, parsedAt: new Date().toISOString() } : item) }
       setProfileDraft(next)
       const saveResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) })
       const savePayload = await saveResponse.json(); if (!saveResponse.ok) throw new Error(savePayload.error || '结构化资料保存失败。')
@@ -435,8 +440,14 @@ function App() {
   const openProfile = () => { setProfileDraft(profile); setProfileOpen(true) }
 
   const useProfileForInterview = () => {
-    const role = String(profileDraft.targetRoles[0] || '')
-    setInterviewSetup((current) => ({ ...current, role: current.role || role, resume: current.resume || profileDraft.resumeText }))
+    const resumes = profileDraft.resumes.length ? profileDraft.resumes : (profileDraft.resumeText ? [{ id: 'legacy-default', role: profileDraft.targetRoles[0] || '通用', fileName: profileDraft.resumeFileName, text: profileDraft.resumeText }] : [])
+    if (!resumes.length && !profileDraft.targetRoles.length) return
+    const options = resumes.map((item, index) => `${index + 1}. ${item.role} · ${item.fileName || '未命名简历'}`).join('\n')
+    const selected = window.prompt(`选择用于模拟面试的岗位与简历：\n${options}`, '1')
+    const index = Math.max(0, Math.min(resumes.length - 1, Number(selected || 1) - 1))
+    const resume = resumes[index]
+    const role = resume?.role || String(profileDraft.targetRoles[0] || '')
+    setInterviewSetup((current) => ({ ...current, role: current.role || role, resume: current.resume || resume?.text || profileDraft.resumeText, resumeId: resume?.id || '' }))
   }
 
   const submitInterviewTurn = async () => {

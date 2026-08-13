@@ -73,6 +73,7 @@ database.exec(`
     target_roles TEXT NOT NULL DEFAULT '[]',
     resume_text TEXT NOT NULL DEFAULT '',
     resume_file_name TEXT NOT NULL DEFAULT '',
+    resumes_json TEXT NOT NULL DEFAULT '[]',
     candidate_profile_json TEXT NOT NULL DEFAULT '{}',
     parsed_at TEXT,
     created_at TEXT NOT NULL,
@@ -84,13 +85,18 @@ database.exec(`
 for (const statement of [
   "ALTER TABLE user_profile ADD COLUMN candidate_profile_json TEXT NOT NULL DEFAULT '{}'",
   "ALTER TABLE user_profile ADD COLUMN parsed_at TEXT",
+  "ALTER TABLE user_profile ADD COLUMN resumes_json TEXT NOT NULL DEFAULT '[]'",
 ]) {
   try { database.exec(statement) } catch (error) { if (!String(error.message).includes('duplicate column')) throw error }
 }
 
 const now = () => new Date().toISOString()
 const parseJson = (value, fallback) => { try { return JSON.parse(value || '') } catch { return fallback } }
-const toProfile = (row) => row ? ({ id: row.id, name: row.name, headline: row.headline, yearsExperience: row.years_experience, targetRoles: parseJson(row.target_roles, []), resumeText: row.resume_text, resumeFileName: row.resume_file_name, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null, createdAt: row.created_at, updatedAt: row.updated_at }) : null
+const toProfile = (row) => {
+  if (!row) return null
+  const legacyResume = row.resume_text ? [{ id: 'legacy-default', role: parseJson(row.target_roles, [])[0] || '通用', fileName: row.resume_file_name || '个人简历', text: row.resume_text, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null }] : []
+  return { id: row.id, name: row.name, headline: row.headline, yearsExperience: row.years_experience, targetRoles: parseJson(row.target_roles, []), resumeText: row.resume_text, resumeFileName: row.resume_file_name, resumes: parseJson(row.resumes_json, []).length ? parseJson(row.resumes_json, []) : legacyResume, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null, createdAt: row.created_at, updatedAt: row.updated_at }
+}
 const toQuestion = (row) => ({
   id: row.id,
   title: row.title,
@@ -119,7 +125,7 @@ export function listQuestions(filters = {}) {
 }
 
 export function getProfile() {
-  return toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || { id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', candidateProfile: null, parsedAt: null }
+  return toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || { id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null }
 }
 
 export function updateProfile(patch) {
@@ -128,8 +134,9 @@ export function updateProfile(patch) {
   const timestamp = now()
   const candidateProfile = patch.candidateProfile !== undefined ? patch.candidateProfile : current.candidateProfile
   const parsedAt = patch.parsedAt !== undefined ? patch.parsedAt : current.parsedAt
-  database.prepare(`INSERT INTO user_profile (id, name, headline, years_experience, target_roles, resume_text, resume_file_name, candidate_profile_json, parsed_at, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET name = excluded.name, headline = excluded.headline, years_experience = excluded.years_experience, target_roles = excluded.target_roles, resume_text = excluded.resume_text, resume_file_name = excluded.resume_file_name, candidate_profile_json = excluded.candidate_profile_json, parsed_at = excluded.parsed_at, updated_at = excluded.updated_at`).run(String(next.name || '').trim(), String(next.headline || '').trim(), Math.max(0, Number(next.yearsExperience) || 0), JSON.stringify(next.targetRoles), String(next.resumeText || ''), String(next.resumeFileName || ''), JSON.stringify(candidateProfile || {}), parsedAt || null, current.createdAt || timestamp, timestamp)
+  const resumes = Array.isArray(patch.resumes) ? patch.resumes.slice(0, 20).map((item) => ({ id: String(item.id || crypto.randomUUID()), role: String(item.role || '通用').trim(), fileName: String(item.fileName || '').trim(), text: String(item.text || ''), candidateProfile: item.candidateProfile || null, parsedAt: item.parsedAt || null })).filter((item) => item.text) : (current.resumes || [])
+  database.prepare(`INSERT INTO user_profile (id, name, headline, years_experience, target_roles, resume_text, resume_file_name, resumes_json, candidate_profile_json, parsed_at, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name = excluded.name, headline = excluded.headline, years_experience = excluded.years_experience, target_roles = excluded.target_roles, resume_text = excluded.resume_text, resume_file_name = excluded.resume_file_name, resumes_json = excluded.resumes_json, candidate_profile_json = excluded.candidate_profile_json, parsed_at = excluded.parsed_at, updated_at = excluded.updated_at`).run(String(next.name || '').trim(), String(next.headline || '').trim(), Math.max(0, Number(next.yearsExperience) || 0), JSON.stringify(next.targetRoles), String(next.resumeText || ''), String(next.resumeFileName || ''), JSON.stringify(resumes), JSON.stringify(candidateProfile || {}), parsedAt || null, current.createdAt || timestamp, timestamp)
   return getProfile()
 }
 
