@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { createQuestions, createLearningSession, editQuestion, listQuestions, removeQuestion } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -115,6 +116,41 @@ async function handle(request, response) {
       return jsonResponse(response, upstream.ok ? 200 : 502, { ok: upstream.ok, configured: true, provider, model, modelCount: Array.isArray(payload.data) ? payload.data.length : 0, error: payload.error?.message })
     } catch (error) {
       return jsonResponse(response, 502, { ok: false, configured: true, provider, model, error: error.message })
+    }
+  }
+  if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', mastery: url.searchParams.get('mastery') || '' }) })
+  }
+  if (request.method === 'POST' && request.url === '/api/questions') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!Array.isArray(body.questions) || !body.questions.length) return jsonResponse(response, 400, { error: 'questions 不能为空数组。' })
+      return jsonResponse(response, 201, { questions: createQuestions(body.questions) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '题目保存失败。' })
+    }
+  }
+  if (request.method === 'PATCH' && request.url.startsWith('/api/questions/')) {
+    const id = request.url.slice('/api/questions/'.length)
+    try {
+      const updated = editQuestion(id, JSON.parse(await readBody(request)))
+      return updated ? jsonResponse(response, 200, { question: updated }) : jsonResponse(response, 404, { error: '题目不存在。' })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '题目更新失败。' })
+    }
+  }
+  if (request.method === 'DELETE' && request.url.startsWith('/api/questions/')) {
+    const id = request.url.slice('/api/questions/'.length)
+    return removeQuestion(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '题目不存在。' })
+  }
+  if (request.method === 'POST' && request.url === '/api/learning-sessions') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!Array.isArray(body.questionIds)) return jsonResponse(response, 400, { error: 'questionIds 不能为空数组。' })
+      return jsonResponse(response, 201, { session: createLearningSession(body.questionIds) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '学习 session 创建失败。' })
     }
   }
   if (request.method === 'POST' && request.url === '/api/llm/parse-questions') {

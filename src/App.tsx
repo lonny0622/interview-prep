@@ -132,10 +132,33 @@ function App() {
   const [importer, setImporter] = useState<{ step: 'input' | 'preview'; source: string; drafts: QuestionDraft[]; error: string; processing: boolean } | null>(null)
   const [learningIndex, setLearningIndex] = useState(0)
   const [learningReveal, setLearningReveal] = useState(false)
+  const [serverReady, setServerReady] = useState(false)
+  const [learningSessionId, setLearningSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(questions))
   }, [questions])
+
+  useEffect(() => {
+    fetch('/api/questions')
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('题库服务不可用')))
+      .then((payload: { questions: Question[] }) => {
+        if (Array.isArray(payload.questions)) {
+          setQuestions(payload.questions)
+          setSelectedId(payload.questions[0]?.id ?? '')
+          setServerReady(true)
+        }
+      })
+      .catch(() => setServerReady(false))
+  }, [])
+
+  useEffect(() => {
+    if (activeNav !== 'learning' || !serverReady || learningSessionId || !questions.length) return
+    fetch('/api/learning-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: questions.map((question) => question.id) }) })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习 session 创建失败')))
+      .then((payload: { session: { id: string } }) => setLearningSessionId(payload.session.id))
+      .catch(() => setServerReady(false))
+  }, [activeNav, learningSessionId, questions, serverReady])
 
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set(questions.map((question) => question.category))]
@@ -151,6 +174,7 @@ function App() {
 
   const updateMastery = (nextMastery: Mastery) => {
     setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, mastery: nextMastery } : question))
+    if (serverReady && selected) fetch(`/api/questions/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) }).catch(() => setServerReady(false))
   }
 
   const openEditor = (question?: Question) => {
@@ -164,10 +188,12 @@ function App() {
     if (!editor || !editor.draft.title.trim() || !editor.draft.category.trim()) return
     if (editor.mode === 'edit') {
       setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, ...editor.draft } : question))
+      if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editor.draft) }).catch(() => setServerReady(false))
     } else {
       const nextQuestion: Question = { ...editor.draft, id: crypto.randomUUID(), mastery: '未学习' }
       setQuestions((current) => [nextQuestion, ...current])
       setSelectedId(nextQuestion.id)
+      if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: [editor.draft] }) }).then(async (response) => { if (!response.ok) throw new Error('题目保存失败'); const payload = await response.json(); if (payload.questions?.[0]) setQuestions((current) => [payload.questions[0], ...current.filter((item) => item.id !== nextQuestion.id)]) }).catch(() => setServerReady(false))
     }
     setEditor(null)
   }
@@ -177,6 +203,7 @@ function App() {
     const nextQuestions = questions.filter((question) => question.id !== selected.id)
     setQuestions(nextQuestions)
     setSelectedId(nextQuestions[0]?.id ?? '')
+    if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'DELETE' }).catch(() => setServerReady(false))
   }
 
   const learningQuestions = useMemo(() => [...questions].sort((a, b) => {
@@ -214,6 +241,7 @@ function App() {
     const imported = importer.drafts.map((draft) => ({ ...draft, id: crypto.randomUUID(), mastery: '未学习' as Mastery }))
     setQuestions((current) => [...imported, ...current])
     setSelectedId(imported[0].id)
+    if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: importer.drafts }) }).then(async (response) => { if (!response.ok) throw new Error('批量保存失败'); const payload = await response.json(); setQuestions((current) => [...(payload.questions || []), ...current.filter((item) => !imported.some((created) => created.id === item.id))]) }).catch(() => setServerReady(false))
     setImporter(null)
   }
 
@@ -221,6 +249,7 @@ function App() {
     const current = learningQuestions[learningIndex]
     if (!current) return
     setQuestions((items) => items.map((item) => item.id === current.id ? { ...item, mastery: nextMastery } : item))
+    if (serverReady) fetch(`/api/questions/${current.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) }).catch(() => setServerReady(false))
     setLearningReveal(false)
     if (learningIndex < learningQuestions.length - 1) setLearningIndex((index) => index + 1)
   }
@@ -285,7 +314,7 @@ function App() {
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
       <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
       <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button> })}</nav>
-      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
+      <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '本地数据模式'}</div><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
     <main className="main-content">
       {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
