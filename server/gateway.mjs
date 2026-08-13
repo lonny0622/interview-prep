@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
+import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -36,7 +36,7 @@ const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
-const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","followUps":["追问"]}]'
+const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 
 function jsonResponse(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -151,6 +151,7 @@ function normalizeBlueprint(value) {
     kind: String(item.kind || '八股题').trim(),
     question: String(item.question || item.title || '').trim(),
     focus: String(item.focus || '').trim(),
+    referenceAnswer: String(item.referenceAnswer || item.reference_answer || item.expectedPoints || '').trim(),
     followUps: Array.isArray(item.followUps) ? item.followUps.map(String).filter(Boolean).slice(0, 3) : [],
   })).filter((item) => item.question).slice(0, 18)
 }
@@ -158,12 +159,12 @@ function normalizeBlueprint(value) {
 function fallbackBlueprint(profile) {
   const project = profile.projects?.[0]?.name || '你简历中的核心项目'
   return [
-    { stage: 'self_introduction', kind: '自我介绍', question: '请做一个 1-2 分钟的自我介绍，重点讲和这个岗位最相关的经历。', focus: '表达结构、岗位匹配度', followUps: ['为什么考虑这个岗位？'] },
-    { stage: 'project_experience', kind: '简历项目题', question: `请介绍一下你在「${project}」项目中的职责、技术选型和最终结果。`, focus: '项目真实性、个人贡献、结果', followUps: ['当时最大的技术取舍是什么？'] },
-    { stage: 'knowledge', kind: '八股题', question: '在前端应用中，你会如何定位一次明显的性能下降？', focus: '分析方法、指标和验证', followUps: ['如果优化没有收益，你会怎么排查？'] },
-    { stage: 'scenario', kind: '场景题', question: '如果线上出现偶发的接口变慢和页面卡顿，你会如何组织定位和止损？', focus: '优先级、协作和落地', followUps: ['如何判断先处理前端还是后端？'] },
-    { stage: 'follow_up', kind: '发散追问', question: '如果重新做一个类似项目，你会保留和改变哪些设计？', focus: '复盘能力、边界意识', followUps: [] },
-    { stage: 'candidate_questions', kind: '反问环节', question: '面试接近尾声，你想向面试官了解哪些信息？', focus: '问题质量、岗位理解', followUps: [] },
+    { stage: 'self_introduction', kind: '自我介绍', question: '请做一个 1-2 分钟的自我介绍，重点讲和这个岗位最相关的经历。', focus: '表达结构、岗位匹配度', referenceAnswer: '应包含个人定位、最相关经历、核心能力和与岗位的匹配关系。', followUps: ['为什么考虑这个岗位？'] },
+    { stage: 'project_experience', kind: '简历项目题', question: `请介绍一下你在「${project}」项目中的职责、技术选型和最终结果。`, focus: '项目真实性、个人贡献、结果', referenceAnswer: '应说明项目背景、个人职责、关键技术取舍、遇到的难点和可量化结果。', followUps: ['当时最大的技术取舍是什么？'] },
+    { stage: 'knowledge', kind: '八股题', question: '在前端应用中，你会如何定位一次明显的性能下降？', focus: '分析方法、指标和验证', referenceAnswer: '应先区分加载、运行时和交互问题，建立指标基线，再使用 Performance、Network 或 Profiler 验证假设。', followUps: ['如果优化没有收益，你会怎么排查？'] },
+    { stage: 'scenario', kind: '场景题', question: '如果线上出现偶发的接口变慢和页面卡顿，你会如何组织定位和止损？', focus: '优先级、协作和落地', referenceAnswer: '应先确认影响范围并止损，再通过监控、链路和前后端指标定位，最后补充复盘和监控。', followUps: ['如何判断先处理前端还是后端？'] },
+    { stage: 'follow_up', kind: '发散追问', question: '如果重新做一个类似项目，你会保留和改变哪些设计？', focus: '复盘能力、边界意识', referenceAnswer: '应结合真实项目说明保留的设计、改动依据和预期收益，不能只给抽象观点。', followUps: [] },
+    { stage: 'candidate_questions', kind: '反问环节', question: '面试接近尾声，你想向面试官了解哪些信息？', focus: '问题质量、岗位理解', referenceAnswer: '应围绕岗位目标、团队协作、技术挑战和成功标准提出具体问题。', followUps: [] },
   ]
 }
 
@@ -305,7 +306,7 @@ async function handle(request, response) {
   }
   if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
     const url = new URL(request.url, 'http://127.0.0.1')
-    return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', mastery: url.searchParams.get('mastery') || '' }) })
+    return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', difficulty: url.searchParams.get('difficulty') || '', mastery: url.searchParams.get('mastery') || '' }) })
   }
   if (request.method === 'POST' && request.url === '/api/questions') {
     try {
@@ -366,6 +367,9 @@ async function handle(request, response) {
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' })
     }
+  }
+  if (request.method === 'GET' && request.url === '/api/interview-sessions') {
+    return jsonResponse(response, 200, { sessions: listInterviewSessions() })
   }
   if (request.method === 'POST' && request.url === '/api/resume/extract') {
     try {

@@ -87,8 +87,9 @@ const updateQuestion = database.prepare(`UPDATE questions SET title = ?, categor
 export function listQuestions(filters = {}) {
   const clauses = []
   const values = []
-  if (filters.q) { clauses.push('(title LIKE ? OR category LIKE ?)'); values.push(`%${filters.q}%`, `%${filters.q}%`) }
+  if (filters.q) { clauses.push('(title LIKE ? OR category LIKE ? OR answer LIKE ? OR explanation LIKE ? OR interview_answer LIKE ? OR follow_ups LIKE ?)'); values.push(...Array(6).fill(`%${filters.q}%`)) }
   if (filters.category && filters.category !== '全部分类') { clauses.push('category = ?'); values.push(filters.category) }
+  if (filters.difficulty && filters.difficulty !== '全部难度') { clauses.push('difficulty = ?'); values.push(filters.difficulty) }
   if (filters.mastery && filters.mastery !== '全部掌握度') { clauses.push('mastery = ?'); values.push(filters.mastery) }
   const query = `SELECT * FROM questions ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY CASE mastery WHEN '未学习' THEN 0 WHEN '了解' THEN 1 WHEN '熟悉' THEN 2 ELSE 3 END, importance DESC, updated_at DESC`
   return database.prepare(query).all(...values).map(toQuestion)
@@ -170,6 +171,10 @@ export function createInterviewSession(profile, blueprint) {
 
 export function getInterviewSession(id) {
   return toInterview(database.prepare('SELECT * FROM interview_sessions WHERE id = ?').get(id))
+}
+
+export function listInterviewSessions() {
+  return database.prepare('SELECT * FROM interview_sessions ORDER BY updated_at DESC LIMIT 20').all().map(toInterview)
 }
 
 export function saveInterviewTurn(sessionId, turn, score) {

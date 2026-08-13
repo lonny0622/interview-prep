@@ -24,7 +24,7 @@ type Question = {
 type QuestionDraft = Omit<Question, 'id' | 'mastery'>
 type ScoreResult = { score: number; dimensions?: Record<string, number>; strengths: string[]; gaps: string[]; betterAnswer: string; source?: string; fallbackReason?: string }
 type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string; error: string }
-type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; followUps: string[] }
+type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; referenceAnswer: string; followUps: string[] }
 type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
 type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
@@ -130,6 +130,7 @@ function App() {
   const [activeNav, setActiveNav] = useState('library')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('全部分类')
+  const [difficulty, setDifficulty] = useState('全部难度')
   const [mastery, setMastery] = useState('全部掌握度')
   const [selectedId, setSelectedId] = useState(seedQuestions[0].id)
   const [showAnswer, setShowAnswer] = useState(false)
@@ -143,6 +144,7 @@ function App() {
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
   const [interviewSetup, setInterviewSetup] = useState({ role: '', company: '', jd: '', resume: '', duration: '30 分钟', difficulty: '中等' })
+  const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
   const [resumeUpload, setResumeUpload] = useState({ loading: false, fileName: '', error: '' })
   const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const interviewRecorderRef = useRef<MediaRecorder | null>(null)
@@ -175,16 +177,26 @@ function App() {
       .catch(() => setServerReady(false))
   }, [activeNav, learningSessionId, questions, serverReady])
 
+  useEffect(() => {
+    if (activeNav !== 'interview' || !serverReady) return
+    fetch('/api/interview-sessions')
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('模拟面试列表不可用')))
+      .then((payload: { sessions: InterviewSession[] }) => setInterviewSessions(payload.sessions || []))
+      .catch(() => {})
+  }, [activeNav, serverReady])
+
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set(questions.map((question) => question.category))]
   const filteredQuestions = useMemo(
     () => questions.filter((question) => {
-      const matchesQuery = question.title.toLowerCase().includes(query.toLowerCase())
+      const haystack = [question.title, question.category, question.answer, question.explanation, question.interviewAnswer, ...question.followUps].join('\n').toLowerCase()
+      const matchesQuery = haystack.includes(query.toLowerCase())
       const matchesCategory = category === '全部分类' || question.category === category
+      const matchesDifficulty = difficulty === '全部难度' || question.difficulty === difficulty
       const matchesMastery = mastery === '全部掌握度' || question.mastery === mastery
-      return matchesQuery && matchesCategory && matchesMastery
+      return matchesQuery && matchesCategory && matchesDifficulty && matchesMastery
     }),
-    [category, mastery, query, questions],
+    [category, difficulty, mastery, query, questions],
   )
 
   const updateMastery = (nextMastery: Mastery) => {
@@ -343,6 +355,15 @@ function App() {
     }
   }
 
+  const resumeInterview = async (id: string) => {
+    try {
+      const response = await fetch(`/api/interview-sessions/${id}`)
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || '模拟面试恢复失败。')
+      setInterview({ session: payload.session, turns: payload.turns || [], answer: '', loading: false, completing: false, report: payload.session.report, error: '' })
+    } catch (error) { window.alert(error instanceof Error ? error.message : '模拟面试恢复失败。') }
+  }
+
   const uploadResume = async (file: File) => {
     setResumeUpload({ loading: true, fileName: file.name, error: '' })
     try {
@@ -361,7 +382,7 @@ function App() {
     if (!current) return
     setInterview({ ...interview, loading: true })
     try {
-      const response = await fetch(`/api/interview-sessions/${interview.session.id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: current.stage, question: current.question, answerText: interview.answer }) })
+      const response = await fetch(`/api/interview-sessions/${interview.session.id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: current.stage, question: current.question, referenceAnswer: current.referenceAnswer, answerText: interview.answer }) })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || '回答保存失败。')
       const next = { ...interview.session, currentIndex: Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1), stage: interview.session.blueprint[Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1)]?.stage || current.stage }
@@ -446,7 +467,7 @@ function App() {
   }
 
   const renderInterview = () => {
-    if (!interview) return <div className="interview-setup"><p className="eyebrow">Interview workspace / 04</p><h1>模拟面试</h1><p className="page-description">引用你的简历、项目素材和 JD，生成一场覆盖项目题、八股、场景题和反问的完整面试。</p><div className="interview-form"><label><span>目标岗位</span><input value={interviewSetup.role} onChange={(event) => setInterviewSetup({ ...interviewSetup, role: event.target.value })} placeholder="例如：高级前端工程师" /></label><label><span>公司（可选）</span><input value={interviewSetup.company} onChange={(event) => setInterviewSetup({ ...interviewSetup, company: event.target.value })} placeholder="例如：某互联网公司" /></label><label className="full-field"><span>岗位 JD</span><textarea rows={6} value={interviewSetup.jd} onChange={(event) => setInterviewSetup({ ...interviewSetup, jd: event.target.value })} placeholder="粘贴岗位职责和任职要求" /></label><label className="full-field"><span>上传简历文档</span><input className="resume-file-input" type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadResume(file) }} />{resumeUpload.loading && <small className="upload-status">正在提取 {resumeUpload.fileName}…</small>}{resumeUpload.fileName && !resumeUpload.loading && !resumeUpload.error && <small className="upload-status success">已读取：{resumeUpload.fileName}</small>}{resumeUpload.error && <small className="upload-status error">{resumeUpload.error}</small>}</label><label className="full-field"><span>简历或项目素材文本（可选）</span><textarea rows={8} value={interviewSetup.resume} onChange={(event) => setInterviewSetup({ ...interviewSetup, resume: event.target.value })} placeholder="也可以直接粘贴原始简历内容或项目素材" /></label><label><span>面试时长</span><select value={interviewSetup.duration} onChange={(event) => setInterviewSetup({ ...interviewSetup, duration: event.target.value })}><option>15 分钟</option><option>30 分钟</option><option>45 分钟</option></select></label><label><span>难度</span><select value={interviewSetup.difficulty} onChange={(event) => setInterviewSetup({ ...interviewSetup, difficulty: event.target.value })}><option>简单</option><option>中等</option><option>困难</option></select></label></div><button className="primary-button" type="button" disabled={(!interviewSetup.role.trim() && !interviewSetup.jd.trim()) || resumeUpload.loading} onClick={() => void startInterview()}>生成面试并开始 <Sparkles size={13} /></button></div>
+    if (!interview) return <div className="interview-setup"><p className="eyebrow">Interview workspace / 04</p><h1>模拟面试</h1><p className="page-description">引用你的简历、项目素材和 JD，生成一场覆盖项目题、八股、场景题和反问的完整面试。</p>{interviewSessions.some((session) => session.status === 'active') && <div className="resume-sessions"><span className="section-label">继续未完成的面试</span>{interviewSessions.filter((session) => session.status === 'active').slice(0, 3).map((session) => <button key={session.id} type="button" onClick={() => void resumeInterview(session.id)}><strong>{String(session.profile.role || '未命名岗位')}</strong><span>第 {session.currentIndex + 1} / {session.blueprint.length} 轮</span><ArrowRight size={13} /></button>)}</div>}<div className="interview-form"><label><span>目标岗位</span><input value={interviewSetup.role} onChange={(event) => setInterviewSetup({ ...interviewSetup, role: event.target.value })} placeholder="例如：高级前端工程师" /></label><label><span>公司（可选）</span><input value={interviewSetup.company} onChange={(event) => setInterviewSetup({ ...interviewSetup, company: event.target.value })} placeholder="例如：某互联网公司" /></label><label className="full-field"><span>岗位 JD</span><textarea rows={6} value={interviewSetup.jd} onChange={(event) => setInterviewSetup({ ...interviewSetup, jd: event.target.value })} placeholder="粘贴岗位职责和任职要求" /></label><label className="full-field"><span>上传简历文档</span><input className="resume-file-input" type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadResume(file) }} />{resumeUpload.loading && <small className="upload-status">正在提取 {resumeUpload.fileName}…</small>}{resumeUpload.fileName && !resumeUpload.loading && !resumeUpload.error && <small className="upload-status success">已读取：{resumeUpload.fileName}</small>}{resumeUpload.error && <small className="upload-status error">{resumeUpload.error}</small>}</label><label className="full-field"><span>简历或项目素材文本（可选）</span><textarea rows={8} value={interviewSetup.resume} onChange={(event) => setInterviewSetup({ ...interviewSetup, resume: event.target.value })} placeholder="也可以直接粘贴原始简历内容或项目素材" /></label><label><span>面试时长</span><select value={interviewSetup.duration} onChange={(event) => setInterviewSetup({ ...interviewSetup, duration: event.target.value })}><option>15 分钟</option><option>30 分钟</option><option>45 分钟</option></select></label><label><span>难度</span><select value={interviewSetup.difficulty} onChange={(event) => setInterviewSetup({ ...interviewSetup, difficulty: event.target.value })}><option>简单</option><option>中等</option><option>困难</option></select></label></div><button className="primary-button" type="button" disabled={(!interviewSetup.role.trim() && !interviewSetup.jd.trim()) || resumeUpload.loading} onClick={() => void startInterview()}>生成面试并开始 <Sparkles size={13} /></button></div>
     if (interview.loading && !interview.session.id) return <div className="interview-setup"><p className="eyebrow">Interview session</p><h1>正在准备面试</h1><p className="page-description">正在根据岗位、JD 和简历生成问题蓝图…</p></div>
     if (interview.report) return <div className="interview-page"><header className="page-header interview-header"><div><p className="eyebrow">Interview review</p><h1>模拟面试复盘</h1><p className="page-description">共完成 {interview.turns.length} 轮回答 · {interviewSetup.role || '目标岗位'}</p></div><button className="quiet-button" type="button" onClick={() => setInterview(null)}>新建一场</button></header><div className="review-grid"><section className="review-summary"><span className="review-score-label">本次总结</span><p>{interview.report.summary}</p></section><section><h3>做得好的地方</h3><ul>{interview.report.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>需要注意</h3><ul>{interview.report.risks.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>下一步训练</h3><ul>{interview.report.suggestions.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>推荐重练题</h3><ul>{interview.report.nextQuestions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></div>
     const current = interview.session.blueprint[interview.session.currentIndex]
@@ -475,6 +496,7 @@ function App() {
       <div className="toolbar">
         <label className="search-box"><Search size={14} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索问题或关键词" /></label>
         <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
+        <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>{['全部难度', '简单', '中等', '困难'].map((item) => <option key={item}>{item}</option>)}</select>
         <select value={mastery} onChange={(event) => setMastery(event.target.value)}>{['全部掌握度', '未学习', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select>
         <button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', drafts: [], error: '', processing: false })}><Upload size={13} />批量导入</button>
       </div>
