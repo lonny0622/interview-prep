@@ -27,7 +27,8 @@ type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string;
 type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; referenceAnswer: string; followUps: string[] }
 type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
 type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
-type UserProfile = { id: number; name: string; headline: string; yearsExperience: number; targetRoles: string[]; resumeText: string; resumeFileName: string }
+type StructuredProfile = { candidate: { name: string; headline: string; yearsExperience: number; skills: string[]; experiences: Array<{ company: string; title: string; period: string; responsibilities: string[] }>; projects: Array<{ name: string; background: string; responsibilities: string[]; techStack: string[]; challenges: string[]; solutions: string[]; results: string[]; risks: string[] }>; sourceText?: string }; job: { role: string; responsibilities: string[]; requiredSkills: string[]; preferredExperience: string[]; interviewSignals: string[]; sourceText?: string }; gaps: string[] }
+type UserProfile = { id: number; name: string; headline: string; yearsExperience: number; targetRoles: string[]; resumeText: string; resumeFileName: string; candidateProfile?: StructuredProfile | null; parsedAt?: string | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -148,12 +149,14 @@ function App() {
   const [interviewSessions, setInterviewSessions] = useState<InterviewSession[]>([])
   const [resumeUpload, setResumeUpload] = useState({ loading: false, fileName: '', error: '' })
   const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
-  const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '' })
+  const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', candidateProfile: null, parsedAt: null })
   const [profileDraft, setProfileDraft] = useState<UserProfile>(profile)
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileRoleInput, setProfileRoleInput] = useState('')
   const [profileResumeUpload, setProfileResumeUpload] = useState({ loading: false, error: '' })
+  const [profileParsing, setProfileParsing] = useState(false)
+  const [profileParseError, setProfileParseError] = useState('')
   const interviewRecorderRef = useRef<MediaRecorder | null>(null)
   const interviewChunksRef = useRef<Blob[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -402,10 +405,31 @@ function App() {
   const saveProfile = async () => {
     setProfileSaving(true)
     try {
+      if (profileDraft.resumeText.trim() && !profileDraft.candidateProfile) {
+        await parseAndSaveProfile()
+        setProfileOpen(false)
+        return
+      }
       const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileDraft) })
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '个人资料保存失败。')
       setProfile(payload.profile); setProfileDraft(payload.profile); setProfileOpen(false)
     } catch (error) { window.alert(error instanceof Error ? error.message : '个人资料保存失败。') } finally { setProfileSaving(false) }
+  }
+
+  const parseAndSaveProfile = async () => {
+    if (!profileDraft.resumeText.trim()) { setProfileParseError('请先上传或粘贴简历文本。'); return }
+    setProfileParsing(true); setProfileParseError('')
+    try {
+      const response = await fetch('/api/profile/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: profileDraft.resumeText, existing: profileDraft }) })
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '资料解析失败。')
+      const structured = payload.profile as StructuredProfile
+      const candidate = structured.candidate
+      const next = { ...profileDraft, name: profileDraft.name || candidate.name, headline: profileDraft.headline || candidate.headline, yearsExperience: profileDraft.yearsExperience || candidate.yearsExperience, candidateProfile: structured, parsedAt: new Date().toISOString() }
+      setProfileDraft(next)
+      const saveResponse = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) })
+      const savePayload = await saveResponse.json(); if (!saveResponse.ok) throw new Error(savePayload.error || '结构化资料保存失败。')
+      setProfile(savePayload.profile); setProfileDraft(savePayload.profile)
+    } catch (error) { setProfileParseError(error instanceof Error ? error.message : '资料解析失败。') } finally { setProfileParsing(false) }
   }
 
   const openProfile = () => { setProfileDraft(profile); setProfileOpen(true) }
@@ -509,6 +533,7 @@ function App() {
   }
 
   const renderInterview = () => {
+    if (profileParsing || profileParseError) { /* profile parsing state is surfaced when the profile modal is open. */ }
     if (!interview) return <div className="interview-setup"><p className="eyebrow">Interview workspace / 04</p><h1>模拟面试</h1><p className="page-description">引用你的简历、项目素材和 JD，生成一场覆盖项目题、八股、场景题和反问的完整面试。</p>{interviewSessions.some((session) => session.status === 'active') && <div className="resume-sessions"><span className="section-label">继续未完成的面试</span>{interviewSessions.filter((session) => session.status === 'active').slice(0, 3).map((session) => <button key={session.id} type="button" onClick={() => void resumeInterview(session.id)}><strong>{String(session.profile.role || '未命名岗位')}</strong><span>第 {session.currentIndex + 1} / {session.blueprint.length} 轮</span><ArrowRight size={13} /></button>)}</div>} {(profile.resumeText || profile.targetRoles.length) && <button className="profile-use-button" type="button" onClick={useProfileForInterview}><Check size={13} />使用个人中心资料{profile.targetRoles[0] ? ` · ${profile.targetRoles[0]}` : ''}</button>}<div className="interview-form"><label><span>目标岗位</span><input value={interviewSetup.role} onChange={(event) => setInterviewSetup({ ...interviewSetup, role: event.target.value })} placeholder="例如：高级前端工程师" /></label><label><span>公司（可选）</span><input value={interviewSetup.company} onChange={(event) => setInterviewSetup({ ...interviewSetup, company: event.target.value })} placeholder="例如：某互联网公司" /></label><label className="full-field"><span>岗位 JD</span><textarea rows={6} value={interviewSetup.jd} onChange={(event) => setInterviewSetup({ ...interviewSetup, jd: event.target.value })} placeholder="粘贴岗位职责和任职要求" /></label><label className="full-field"><span>上传简历文档</span><input className="resume-file-input" type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadResume(file) }} />{resumeUpload.loading && <small className="upload-status">正在提取 {resumeUpload.fileName}…</small>}{resumeUpload.fileName && !resumeUpload.loading && !resumeUpload.error && <small className="upload-status success">已读取：{resumeUpload.fileName}</small>}{resumeUpload.error && <small className="upload-status error">{resumeUpload.error}</small>}</label><label className="full-field"><span>简历或项目素材文本（可选）</span><textarea rows={8} value={interviewSetup.resume} onChange={(event) => setInterviewSetup({ ...interviewSetup, resume: event.target.value })} placeholder="也可以直接粘贴原始简历内容或项目素材" /></label><label><span>面试时长</span><select value={interviewSetup.duration} onChange={(event) => setInterviewSetup({ ...interviewSetup, duration: event.target.value })}><option>15 分钟</option><option>30 分钟</option><option>45 分钟</option></select></label><label><span>难度</span><select value={interviewSetup.difficulty} onChange={(event) => setInterviewSetup({ ...interviewSetup, difficulty: event.target.value })}><option>简单</option><option>中等</option><option>困难</option></select></label></div><button className="primary-button" type="button" disabled={(!interviewSetup.role.trim() && !interviewSetup.jd.trim()) || resumeUpload.loading} onClick={() => void startInterview()}>生成面试并开始 <Sparkles size={13} /></button></div>
     if (interview.loading && !interview.session.id) return <div className="interview-setup"><p className="eyebrow">Interview session</p><h1>正在准备面试</h1><p className="page-description">正在根据岗位、JD 和简历生成问题蓝图…</p></div>
     if (interview.report) return <div className="interview-page"><header className="page-header interview-header"><div><p className="eyebrow">Interview review</p><h1>模拟面试复盘</h1><p className="page-description">共完成 {interview.turns.length} 轮回答 · {interviewSetup.role || '目标岗位'}</p></div><button className="quiet-button" type="button" onClick={() => setInterview(null)}>新建一场</button></header><div className="review-grid"><section className="review-summary"><span className="review-score-label">本次总结</span><p>{interview.report.summary}</p></section><section><h3>做得好的地方</h3><ul>{interview.report.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>需要注意</h3><ul>{interview.report.risks.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>下一步训练</h3><ul>{interview.report.suggestions.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>推荐重练题</h3><ul>{interview.report.nextQuestions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></div>

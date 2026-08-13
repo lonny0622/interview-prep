@@ -38,6 +38,7 @@ const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
+const profileSchema = '{"candidate":{"name":"","headline":"","yearsExperience":0,"skills":[""],"experiences":[{"company":"","title":"","period":"","responsibilities":[""]}],"projects":[{"name":"","background":"","responsibilities":[""],"techStack":[""],"challenges":[""],"solutions":[""],"results":[""],"risks":[""]}]},"job":{"role":"","responsibilities":[""],"requiredSkills":[""],"preferredExperience":[""],"interviewSignals":[""]},"gaps":[""]}'
 
 function jsonResponse(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -167,6 +168,48 @@ function fallbackBlueprint(profile) {
     { stage: 'follow_up', kind: '发散追问', question: '如果重新做一个类似项目，你会保留和改变哪些设计？', focus: '复盘能力、边界意识', referenceAnswer: '应结合真实项目说明保留的设计、改动依据和预期收益，不能只给抽象观点。', followUps: [] },
     { stage: 'candidate_questions', kind: '反问环节', question: '面试接近尾声，你想向面试官了解哪些信息？', focus: '问题质量、岗位理解', referenceAnswer: '应围绕岗位目标、团队协作、技术挑战和成功标准提出具体问题。', followUps: [] },
   ]
+}
+
+function normalizeStructuredProfile(value, resumeText = '', jdText = '') {
+  const candidate = value?.candidate || {}
+  const job = value?.job || {}
+  const list = (items) => Array.isArray(items) ? items.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : []
+  const projects = Array.isArray(candidate.projects) ? candidate.projects.map((item) => ({
+    name: String(item?.name || '').trim(), background: String(item?.background || '').trim(), responsibilities: list(item?.responsibilities), techStack: list(item?.techStack), challenges: list(item?.challenges), solutions: list(item?.solutions), results: list(item?.results), risks: list(item?.risks),
+  })).filter((item) => item.name).slice(0, 12) : []
+  const experiences = Array.isArray(candidate.experiences) ? candidate.experiences.map((item) => ({ company: String(item?.company || '').trim(), title: String(item?.title || '').trim(), period: String(item?.period || '').trim(), responsibilities: list(item?.responsibilities) })).filter((item) => item.company || item.title).slice(0, 12) : []
+  return {
+    candidate: { name: String(candidate.name || '').trim(), headline: String(candidate.headline || '').trim(), yearsExperience: Math.max(0, Number(candidate.yearsExperience) || 0), skills: list(candidate.skills), experiences, projects, sourceText: resumeText.slice(0, 80_000) },
+    job: { role: String(job.role || '').trim(), responsibilities: list(job.responsibilities), requiredSkills: list(job.requiredSkills), preferredExperience: list(job.preferredExperience), interviewSignals: list(job.interviewSignals), sourceText: jdText.slice(0, 30_000) },
+    gaps: list(value?.gaps),
+  }
+}
+
+function fallbackStructuredProfile(resumeText = '', jdText = '', existing = {}) {
+  const lines = resumeText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const projectHeading = lines.findIndex((line) => /项目|project/i.test(line))
+  const projectLine = projectHeading >= 0 ? lines[projectHeading + 1] : ''
+  const skillsLine = lines.find((line) => /技能|skill|技术栈/i.test(line)) || ''
+  const skills = skillsLine.split(/[：:、,，|/]/).slice(1).flatMap((item) => item.split(/\s+/)).map((item) => item.trim()).filter((item) => item.length > 1).slice(0, 20)
+  const role = jdText.split(/\r?\n/).map((line) => line.trim()).find((line) => /岗位|职位|工程师|developer|engineer/i.test(line)) || existing.role || ''
+  return normalizeStructuredProfile({ candidate: { name: existing.name || lines[0] || '', headline: existing.headline || '', yearsExperience: existing.yearsExperience || 0, skills, projects: projectLine ? [{ name: projectLine, background: '', responsibilities: [], techStack: skills, challenges: [], solutions: [], results: [], risks: [] }] : [] }, job: { role, responsibilities: [], requiredSkills: [], preferredExperience: [], interviewSignals: [] }, gaps: ['建议补充项目背景、个人职责和量化结果'] }, resumeText, jdText)
+}
+
+async function parseStructuredProfile(resumeText = '', jdText = '', existing = {}) {
+  const fallback = fallbackStructuredProfile(resumeText, jdText, existing)
+  if (!baseUrl || !model || !apiKey || (!resumeText.trim() && !jdText.trim())) return fallback
+  try {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: importModel, temperature: 0.1, max_tokens: 2400, messages: [
+      { role: 'system', content: `你是简历和岗位画像解析器。只输出 JSON，不得输出代码围栏。严格遵守结构：${profileSchema}。只能提取文本中明确出现的事实；未知字段填空数组，不得编造项目、公司、技术或结果。项目必须保留原文项目名。` },
+      { role: 'user', content: JSON.stringify({ resumeText: resumeText.slice(0, 80_000), jdText: jdText.slice(0, 30_000) }) },
+    ] }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error?.message || `资料解析失败（${response.status}）。`)
+    return normalizeStructuredProfile(extractObject(payload.choices?.[0]?.message?.content || ''), resumeText, jdText)
+  } catch (error) {
+    console.warn(`Structured profile fallback: ${error.message}`)
+    return fallback
+  }
 }
 
 async function generateInterviewBlueprint(profile) {
@@ -348,6 +391,18 @@ async function handle(request, response) {
       return jsonResponse(response, 400, { error: error.message || '个人资料保存失败。' })
     }
   }
+  if (request.method === 'POST' && request.url === '/api/profile/parse') {
+    try {
+      const body = JSON.parse(await readBody(request, 1_500_000))
+      const resumeText = String(body.resumeText || '')
+      const jdText = String(body.jdText || '')
+      if (!resumeText.trim() && !jdText.trim()) return jsonResponse(response, 400, { error: 'resumeText 或 jdText 至少填写一项。' })
+      const profile = await parseStructuredProfile(resumeText, jdText, body.existing || {})
+      return jsonResponse(response, 200, { profile, fallback: !baseUrl || !model || !apiKey })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '资料解析失败。' })
+    }
+  }
   if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
     const url = new URL(request.url, 'http://127.0.0.1')
     return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', difficulty: url.searchParams.get('difficulty') || '', mastery: url.searchParams.get('mastery') || '' }) })
@@ -405,9 +460,12 @@ async function handle(request, response) {
     try {
       const body = JSON.parse(await readBody(request, 2_000_000))
       if (!body.profile || typeof body.profile !== 'object') return jsonResponse(response, 400, { error: 'profile 必须是对象。' })
-      const blueprint = await generateInterviewBlueprint(body.profile)
+      const rawProfile = body.profile
+      const structured = rawProfile.candidateProfile || await parseStructuredProfile(String(rawProfile.resume || ''), String(rawProfile.jd || ''), rawProfile)
+      const profile = { ...rawProfile, candidateProfile: structured }
+      const blueprint = await generateInterviewBlueprint(profile)
       if (!blueprint.length) return jsonResponse(response, 502, { error: '没有生成有效的面试问题。' })
-      return jsonResponse(response, 201, { session: createInterviewSession(body.profile, blueprint) })
+      return jsonResponse(response, 201, { session: createInterviewSession(profile, blueprint) })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' })
     }
