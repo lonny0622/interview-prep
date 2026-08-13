@@ -25,6 +25,10 @@ const baseUrl = env('VITE_LLM_BASE_URL').replace(/\/$/, '')
 const model = env('VITE_LLM_MODEL')
 const importModel = env('LLM_IMPORT_MODEL', model)
 const apiKey = env('LLM_API_KEY')
+const sttProvider = env('STT_PROVIDER')
+const sttBaseUrl = env('STT_BASE_URL').replace(/\/$/, '')
+const sttModel = env('STT_MODEL')
+const sttApiKey = env('STT_API_KEY')
 const port = Number(env('LLM_GATEWAY_PORT', '8787'))
 const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
@@ -36,16 +40,30 @@ function jsonResponse(response, statusCode, payload) {
   response.end(JSON.stringify(payload))
 }
 
-function readBody(request) {
+function readBody(request, limit = 1_000_000) {
   return new Promise((resolveBody, reject) => {
     let body = ''
     request.on('data', (chunk) => {
       body += chunk
-      if (body.length > 1_000_000) reject(new Error('请求内容超过 1MB 限制。'))
+      if (body.length > limit) reject(new Error(`请求内容超过 ${Math.round(limit / 1_000_000)}MB 限制。`))
     })
     request.on('end', () => resolveBody(body))
     request.on('error', reject)
   })
+}
+
+async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
+  if (!sttBaseUrl || !sttModel || !sttApiKey) throw new Error('语音转写服务尚未配置。')
+  const binary = Buffer.from(audioBase64, 'base64')
+  if (!binary.length) throw new Error('录音内容为空。')
+  const form = new FormData()
+  form.append('file', new Blob([binary], { type: mimeType }), `answer.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`)
+  form.append('model', sttModel)
+  const response = await fetch(`${sttBaseUrl}/v1/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${sttApiKey}` }, body: form })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload.error?.message || `语音转写请求失败（${response.status}）。`)
+  if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('语音服务没有返回转写文本。')
+  return payload.text.trim()
 }
 
 function extractJson(content) {
@@ -155,6 +173,9 @@ async function handle(request, response) {
       return jsonResponse(response, 502, { ok: false, configured: true, provider, model, error: error.message })
     }
   }
+  if (request.method === 'GET' && request.url === '/api/speech/health') {
+    return jsonResponse(response, 200, { configured: Boolean(sttBaseUrl && sttModel && sttApiKey), provider: sttProvider || 'openai-compatible', model: sttModel || '' })
+  }
   if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
     const url = new URL(request.url, 'http://127.0.0.1')
     return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', mastery: url.searchParams.get('mastery') || '' }) })
@@ -222,6 +243,16 @@ async function handle(request, response) {
       return jsonResponse(response, 200, { score, model })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '评分失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/stt/transcribe') {
+    try {
+      const body = JSON.parse(await readBody(request, 15_000_000))
+      if (typeof body.audioBase64 !== 'string' || !body.audioBase64.trim()) return jsonResponse(response, 400, { error: 'audioBase64 不能为空。' })
+      const text = await transcribeAudio(body.audioBase64, body.mimeType)
+      return jsonResponse(response, 200, { text, model: sttModel })
+    } catch (error) {
+      return jsonResponse(response, 502, { error: error.message || '语音转写失败。' })
     }
   }
   if (request.method === 'POST' && request.url === '/api/llm/parse-questions') {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, ChevronUp, CircleDot, FilePenLine, FileUp, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -23,6 +23,7 @@ type Question = {
 
 type QuestionDraft = Omit<Question, 'id' | 'mastery'>
 type ScoreResult = { score: number; dimensions?: Record<string, number>; strengths: string[]; gaps: string[]; betterAnswer: string; source?: string; fallbackReason?: string }
+type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string; error: string }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -136,6 +137,9 @@ function App() {
   const [serverReady, setServerReady] = useState(false)
   const [learningSessionId, setLearningSessionId] = useState<string | null>(null)
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
+  const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(questions))
@@ -263,9 +267,57 @@ function App() {
       const response = await fetch('/api/practice-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: candidates.map((question) => question.id), filters }) })
       const payload = await response.json()
       setPractice({ questionIds: candidates.map((question) => question.id), index: 0, sessionId: payload.session?.id || crypto.randomUUID(), answer: '', submitted: false, scoring: false, score: null, ...filters })
+      setVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
     } catch {
       setPractice({ questionIds: candidates.map((question) => question.id), index: 0, sessionId: crypto.randomUUID(), answer: '', submitted: false, scoring: false, score: null, ...filters })
+      setVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
     }
+  }
+
+  const startRecording = async () => {
+    if (!practice || voice.recording || !navigator.mediaDevices?.getUserMedia) {
+      setVoice((current) => ({ ...current, error: '当前浏览器不支持录音，请使用文字回答。' }))
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      audioChunksRef.current = []
+      recorder.ondataavailable = (event) => { if (event.data.size) audioChunksRef.current.push(event.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop())
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        const audioUrl = URL.createObjectURL(blob)
+        setVoice({ recording: false, transcribing: true, audioUrl, error: '' })
+        try {
+          const bytes = new Uint8Array(await blob.arrayBuffer())
+          let binary = ''
+          const chunkSize = 0x8000
+          for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+          const response = await fetch('/api/stt/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64: btoa(binary), mimeType: blob.type }) })
+          const payload = await response.json()
+          if (!response.ok) throw new Error(payload.error || '语音转写失败。')
+          setPractice((current) => current ? { ...current, answer: current.answer ? `${current.answer}\n${payload.text}` : payload.text } : current)
+          setVoice({ recording: false, transcribing: false, audioUrl, error: '' })
+        } catch (error) {
+          setVoice({ recording: false, transcribing: false, audioUrl, error: error instanceof Error ? error.message : '语音转写失败，请改用文字回答。' })
+        }
+      }
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setVoice({ recording: true, transcribing: false, audioUrl: '', error: '' })
+    } catch (error) {
+      setVoice({ recording: false, transcribing: false, audioUrl: '', error: error instanceof Error && error.name === 'NotAllowedError' ? '麦克风权限未开启，请允许后重试。' : '无法访问麦克风，请改用文字回答。' })
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop()
+  }
+
+  const resetVoice = () => {
+    if (voice.audioUrl) URL.revokeObjectURL(voice.audioUrl)
+    setVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
   }
 
   const submitPractice = async () => {
@@ -291,7 +343,7 @@ function App() {
     }
     const current = questions.find((question) => question.id === practice.questionIds[practice.index])
     if (!current) return null
-    return <div className="practice-page"><header className="page-header practice-header"><div><p className="eyebrow">Practice session</p><h1>刷题</h1><p className="page-description">第 {practice.index + 1} / {practice.questionIds.length} 题 · {current.category}</p></div><button className="quiet-button" type="button" onClick={() => setPractice(null)}>退出练习</button></header><div className="practice-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2>{practice.submitted && practice.score ? <div className="score-panel"><div className="score-number"><strong>{practice.score.score}</strong><span>/ 100</span><small>{practice.score.source === 'llm' ? 'AI 评分' : '基础评分'}</small></div><div className="score-feedback"><div><h3>做得不错</h3><ul>{practice.score.strengths.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>可以补足</h3><ul>{practice.score.gaps.map((item) => <li key={item}>{item}</li>)}</ul></div></div>{practice.score.betterAnswer && <div className="better-answer"><h3>建议回答</h3><p>{practice.score.betterAnswer}</p></div>}</div> : <><textarea className="practice-answer" value={practice.answer} onChange={(event) => setPractice({ ...practice, answer: event.target.value })} placeholder="用自己的话回答，支持 Markdown 或纯文本…" /><div className="practice-submit"><span>{practice.answer.length} 字</span><button className="primary-button" type="button" disabled={practice.scoring || !practice.answer.trim()} onClick={() => void submitPractice()}>{practice.scoring ? '评分中…' : '提交回答'} <Sparkles size={13} /></button></div></>}{practice.submitted && <div className="practice-next"><button className="quiet-button" type="button" onClick={() => setPractice(null)}>结束</button><button className="primary-button" type="button" onClick={() => setPractice({ ...practice, index: practice.index + 1, answer: '', submitted: false, scoring: false, score: null })}>{practice.index < practice.questionIds.length - 1 ? '下一题' : '完成练习'} <ArrowRight size={13} /></button></div>}</div></div>
+    return <div className="practice-page"><header className="page-header practice-header"><div><p className="eyebrow">Practice session</p><h1>刷题</h1><p className="page-description">第 {practice.index + 1} / {practice.questionIds.length} 题 · {current.category}</p></div><button className="quiet-button" type="button" onClick={() => { resetVoice(); setPractice(null) }}>退出练习</button></header><div className="practice-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2>{practice.submitted && practice.score ? <div className="score-panel"><div className="score-number"><strong>{practice.score.score}</strong><span>/ 100</span><small>{practice.score.source === 'llm' ? 'AI 评分' : '基础评分'}</small></div><div className="score-feedback"><div><h3>做得不错</h3><ul>{practice.score.strengths.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>可以补足</h3><ul>{practice.score.gaps.map((item) => <li key={item}>{item}</li>)}</ul></div></div>{practice.score.betterAnswer && <div className="better-answer"><h3>建议回答</h3><p>{practice.score.betterAnswer}</p></div>}</div> : <><div className="voice-answer"><div className="voice-controls"><button className={voice.recording ? 'record-button recording' : 'record-button'} type="button" onClick={voice.recording ? stopRecording : () => void startRecording()}>{voice.recording ? <><span className="record-dot" />停止录音</> : <><Mic2 size={15} />开始录音</>}</button>{voice.audioUrl && <><audio controls src={voice.audioUrl} /><button className="quiet-button" type="button" onClick={resetVoice}>重新录音</button></>}{voice.transcribing && <span className="voice-status">正在转写…</span>}</div>{voice.error && <p className="voice-error">{voice.error}</p>}<p className="voice-hint">支持语音回答；转写失败时仍可直接输入文字。</p></div><textarea className="practice-answer" value={practice.answer} onChange={(event) => setPractice({ ...practice, answer: event.target.value })} placeholder="用自己的话回答，支持 Markdown 或纯文本…" /><div className="practice-submit"><span>{practice.answer.length} 字</span><button className="primary-button" type="button" disabled={practice.scoring || voice.recording || voice.transcribing || !practice.answer.trim()} onClick={() => void submitPractice()}>{practice.scoring ? '评分中…' : '提交回答'} <Sparkles size={13} /></button></div></>}{practice.submitted && <div className="practice-next"><button className="quiet-button" type="button" onClick={() => { resetVoice(); setPractice(null) }}>结束</button><button className="primary-button" type="button" onClick={() => { resetVoice(); setPractice({ ...practice, index: practice.index + 1, answer: '', submitted: false, scoring: false, score: null }) }}>{practice.index < practice.questionIds.length - 1 ? '下一题' : '完成练习'} <ArrowRight size={13} /></button></div>}</div></div>
   }
 
   const renderLibrary = () => (
