@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -29,6 +30,7 @@ const sttProvider = env('STT_PROVIDER')
 const sttBaseUrl = env('STT_BASE_URL').replace(/\/$/, '')
 const sttModel = env('STT_MODEL')
 const sttApiKey = env('STT_API_KEY')
+const ffmpegPath = env('STT_FFMPEG_PATH', 'ffmpeg')
 const port = Number(env('LLM_GATEWAY_PORT', '8787'))
 const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
@@ -52,12 +54,30 @@ function readBody(request, limit = 1_000_000) {
   })
 }
 
+function convertToWav(binary, mimeType) {
+  if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav' || mimeType === 'audio/wave') return Promise.resolve(binary)
+  return new Promise((resolveConversion, rejectConversion) => {
+    const process = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'])
+    const output = []
+    const errors = []
+    process.stdout.on('data', (chunk) => output.push(chunk))
+    process.stderr.on('data', (chunk) => errors.push(chunk))
+    process.on('error', (error) => rejectConversion(new Error(`音频格式转换失败，请确认已安装 ffmpeg（${error.message}）。`)))
+    process.on('close', (code) => {
+      if (code === 0 && output.length) return resolveConversion(Buffer.concat(output))
+      rejectConversion(new Error(`音频格式转换失败：${Buffer.concat(errors).toString('utf8').trim() || `ffmpeg 退出码 ${code}`}。`))
+    })
+    process.stdin.end(binary)
+  })
+}
+
 async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
   if (!sttBaseUrl || !sttModel || !sttApiKey) throw new Error('语音转写服务尚未配置。')
   const binary = Buffer.from(audioBase64, 'base64')
   if (!binary.length) throw new Error('录音内容为空。')
+  const wav = await convertToWav(binary, mimeType)
   const form = new FormData()
-  form.append('file', new Blob([binary], { type: mimeType }), `answer.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`)
+  form.append('file', new Blob([wav], { type: 'audio/wav' }), 'answer.wav')
   form.append('model', sttModel)
   const response = await fetch(`${sttBaseUrl}/v1/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${sttApiKey}` }, body: form })
   const payload = await response.json().catch(() => ({}))
