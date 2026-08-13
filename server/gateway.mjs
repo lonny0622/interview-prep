@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
+import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateProfile } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -336,6 +336,17 @@ async function handle(request, response) {
   }
   if (request.method === 'GET' && request.url === '/api/speech/health') {
     return jsonResponse(response, 200, { configured: Boolean(sttBaseUrl && sttModel && sttApiKey), provider: sttProvider || 'openai-compatible', model: sttModel || '' })
+  }
+  if (request.method === 'GET' && request.url === '/api/profile') {
+    return jsonResponse(response, 200, { profile: getProfile() })
+  }
+  if (request.method === 'PATCH' && request.url === '/api/profile') {
+    try {
+      const body = JSON.parse(await readBody(request, 500_000))
+      return jsonResponse(response, 200, { profile: updateProfile(body) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '个人资料保存失败。' })
+    }
   }
   if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
     const url = new URL(request.url, 'http://127.0.0.1')

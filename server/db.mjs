@@ -65,9 +65,21 @@ database.exec(`
     score_json TEXT,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS user_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT NOT NULL DEFAULT '',
+    headline TEXT NOT NULL DEFAULT '',
+    years_experience REAL NOT NULL DEFAULT 0,
+    target_roles TEXT NOT NULL DEFAULT '[]',
+    resume_text TEXT NOT NULL DEFAULT '',
+    resume_file_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 `)
 
 const now = () => new Date().toISOString()
+const toProfile = (row) => row ? ({ id: row.id, name: row.name, headline: row.headline, yearsExperience: row.years_experience, targetRoles: JSON.parse(row.target_roles || '[]'), resumeText: row.resume_text, resumeFileName: row.resume_file_name, createdAt: row.created_at, updatedAt: row.updated_at }) : null
 const toQuestion = (row) => ({
   id: row.id,
   title: row.title,
@@ -93,6 +105,19 @@ export function listQuestions(filters = {}) {
   if (filters.mastery && filters.mastery !== '全部掌握度') { clauses.push('mastery = ?'); values.push(filters.mastery) }
   const query = `SELECT * FROM questions ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY CASE mastery WHEN '未学习' THEN 0 WHEN '了解' THEN 1 WHEN '熟悉' THEN 2 ELSE 3 END, importance DESC, updated_at DESC`
   return database.prepare(query).all(...values).map(toQuestion)
+}
+
+export function getProfile() {
+  return toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || { id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '' }
+}
+
+export function updateProfile(patch) {
+  const current = getProfile()
+  const next = { ...current, ...patch, id: 1, targetRoles: Array.isArray(patch.targetRoles) ? patch.targetRoles.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 10) : current.targetRoles }
+  const timestamp = now()
+  database.prepare(`INSERT INTO user_profile (id, name, headline, years_experience, target_roles, resume_text, resume_file_name, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name = excluded.name, headline = excluded.headline, years_experience = excluded.years_experience, target_roles = excluded.target_roles, resume_text = excluded.resume_text, resume_file_name = excluded.resume_file_name, updated_at = excluded.updated_at`).run(String(next.name || '').trim(), String(next.headline || '').trim(), Math.max(0, Number(next.yearsExperience) || 0), JSON.stringify(next.targetRoles), String(next.resumeText || ''), String(next.resumeFileName || ''), current.createdAt || timestamp, timestamp)
+  return getProfile()
 }
 
 export function getQuestion(id) {
