@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { createQuestions, createLearningSession, createPracticeSession, editQuestion, listQuestions, removeQuestion, savePracticeAnswer } from './db.mjs'
+import { completeInterviewSession, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, editQuestion, getInterviewSession, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -36,6 +36,7 @@ const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
+const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","followUps":["追问"]}]'
 
 function jsonResponse(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -92,6 +93,70 @@ function extractJson(content) {
   const first = candidate.indexOf('[')
   const last = candidate.lastIndexOf(']')
   return JSON.parse(first >= 0 && last > first ? candidate.slice(first, last + 1) : candidate)
+}
+
+function extractObject(content) {
+  const candidate = content.match(/\{[\s\S]*\}/)?.[0]
+  if (!candidate) throw new Error('模型返回的复盘结果不是有效 JSON。')
+  return JSON.parse(candidate)
+}
+
+function normalizeBlueprint(value) {
+  if (!Array.isArray(value)) throw new Error('模型返回的问题蓝图不是数组。')
+  const allowed = ['self_introduction', 'project_experience', 'knowledge', 'scenario', 'follow_up', 'candidate_questions']
+  return value.map((item) => ({
+    stage: allowed.includes(item.stage) ? item.stage : 'knowledge',
+    kind: String(item.kind || '八股题').trim(),
+    question: String(item.question || item.title || '').trim(),
+    focus: String(item.focus || '').trim(),
+    followUps: Array.isArray(item.followUps) ? item.followUps.map(String).filter(Boolean).slice(0, 3) : [],
+  })).filter((item) => item.question).slice(0, 18)
+}
+
+function fallbackBlueprint(profile) {
+  const project = profile.projects?.[0]?.name || '你简历中的核心项目'
+  return [
+    { stage: 'self_introduction', kind: '自我介绍', question: '请做一个 1-2 分钟的自我介绍，重点讲和这个岗位最相关的经历。', focus: '表达结构、岗位匹配度', followUps: ['为什么考虑这个岗位？'] },
+    { stage: 'project_experience', kind: '简历项目题', question: `请介绍一下你在「${project}」项目中的职责、技术选型和最终结果。`, focus: '项目真实性、个人贡献、结果', followUps: ['当时最大的技术取舍是什么？'] },
+    { stage: 'knowledge', kind: '八股题', question: '在前端应用中，你会如何定位一次明显的性能下降？', focus: '分析方法、指标和验证', followUps: ['如果优化没有收益，你会怎么排查？'] },
+    { stage: 'scenario', kind: '场景题', question: '如果线上出现偶发的接口变慢和页面卡顿，你会如何组织定位和止损？', focus: '优先级、协作和落地', followUps: ['如何判断先处理前端还是后端？'] },
+    { stage: 'follow_up', kind: '发散追问', question: '如果重新做一个类似项目，你会保留和改变哪些设计？', focus: '复盘能力、边界意识', followUps: [] },
+    { stage: 'candidate_questions', kind: '反问环节', question: '面试接近尾声，你想向面试官了解哪些信息？', focus: '问题质量、岗位理解', followUps: [] },
+  ]
+}
+
+async function generateInterviewBlueprint(profile) {
+  if (!baseUrl || !model || !apiKey) return fallbackBlueprint(profile)
+  const source = JSON.stringify(profile).slice(0, 30_000)
+  try {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: importModel, temperature: 0.3, max_tokens: 2200, messages: [
+      { role: 'system', content: `你是资深面试官，依据候选人资料和 JD 生成一份可执行的模拟面试问题蓝图。必须覆盖自我介绍、简历项目题、八股题、场景题、发散追问、反问环节；项目题必须引用候选人资料中真实出现的项目，不能编造经历。只输出 JSON 数组，结构：${interviewBlueprintSchema}` },
+      { role: 'user', content: source },
+    ] }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error?.message || `面试问题生成失败（${response.status}）。`)
+    return normalizeBlueprint(extractJson(payload.choices?.[0]?.message?.content || ''))
+  } catch (error) {
+    console.warn(`Interview blueprint fallback: ${error.message}`)
+    return fallbackBlueprint(profile)
+  }
+}
+
+async function generateInterviewReport(session, turns) {
+  const fallback = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item) => item.question) }
+  if (!baseUrl || !model || !apiKey) return fallback
+  try {
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.2, max_tokens: 1800, messages: [
+      { role: 'system', content: '你是面试复盘教练。只输出 JSON 对象，字段为 summary、strengths（字符串数组）、risks（字符串数组）、suggestions（字符串数组）、nextQuestions（字符串数组）。评价必须基于实际回答，不要编造经历。' },
+      { role: 'user', content: JSON.stringify({ profile: session.profile, turns }).slice(0, 40_000) },
+    ] }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error?.message || `面试复盘失败（${response.status}）。`)
+    return { ...fallback, ...extractObject(payload.choices?.[0]?.message?.content || '') }
+  } catch (error) {
+    console.warn(`Interview report fallback: ${error.message}`)
+    return fallback
+  }
 }
 
 function normalizeDrafts(value) {
@@ -247,6 +312,47 @@ async function handle(request, response) {
       return jsonResponse(response, 201, { answer: savePracticeAnswer(body.sessionId, body.questionId, body.answerText, body.score) })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '回答保存失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/interview-sessions') {
+    try {
+      const body = JSON.parse(await readBody(request, 2_000_000))
+      if (!body.profile || typeof body.profile !== 'object') return jsonResponse(response, 400, { error: 'profile 必须是对象。' })
+      const blueprint = await generateInterviewBlueprint(body.profile)
+      if (!blueprint.length) return jsonResponse(response, 502, { error: '没有生成有效的面试问题。' })
+      return jsonResponse(response, 201, { session: createInterviewSession(body.profile, blueprint) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' })
+    }
+  }
+  if (request.method === 'GET' && request.url.startsWith('/api/interview-sessions/')) {
+    const id = request.url.slice('/api/interview-sessions/'.length).split('/')[0]
+    const session = getInterviewSession(id)
+    if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
+    return jsonResponse(response, 200, { session, turns: listInterviewTurns(id) })
+  }
+  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/turns$/)) {
+    try {
+      const id = request.url.split('/')[3]
+      const body = JSON.parse(await readBody(request, 2_000_000))
+      if (!body.question || typeof body.answerText !== 'string' || !body.answerText.trim()) return jsonResponse(response, 400, { error: 'question 和 answerText 必填。' })
+      let score = null
+      try { score = await scoreAnswer({ title: body.question, answer: body.referenceAnswer || '', interviewAnswer: body.referenceAnswer || '' }, body.answerText) } catch { score = null }
+      return jsonResponse(response, 201, { turn: saveInterviewTurn(id, { stage: body.stage || 'knowledge', question: body.question, answerText: body.answerText }, score) })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '面试回答保存失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/complete$/)) {
+    try {
+      const id = request.url.split('/')[3]
+      const session = getInterviewSession(id)
+      if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
+      const turns = listInterviewTurns(id)
+      const report = await generateInterviewReport(session, turns)
+      return jsonResponse(response, 200, { session: completeInterviewSession(id, report), report })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '面试复盘失败。' })
     }
   }
   if (request.method === 'POST' && request.url === '/api/score-answer') {

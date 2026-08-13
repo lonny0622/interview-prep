@@ -24,6 +24,9 @@ type Question = {
 type QuestionDraft = Omit<Question, 'id' | 'mastery'>
 type ScoreResult = { score: number; dimensions?: Record<string, number>; strengths: string[]; gaps: string[]; betterAnswer: string; source?: string; fallbackReason?: string }
 type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string; error: string }
+type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; followUps: string[] }
+type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
+type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -138,6 +141,11 @@ function App() {
   const [learningSessionId, setLearningSessionId] = useState<string | null>(null)
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
+  const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
+  const [interviewSetup, setInterviewSetup] = useState({ role: '', company: '', jd: '', resume: '', duration: '30 分钟', difficulty: '中等' })
+  const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
+  const interviewRecorderRef = useRef<MediaRecorder | null>(null)
+  const interviewChunksRef = useRef<Blob[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
 
@@ -320,6 +328,84 @@ function App() {
     setVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
   }
 
+  const startInterview = async () => {
+    if (!interviewSetup.role.trim() && !interviewSetup.jd.trim()) return
+    setInterview({ session: {} as InterviewSession, turns: [], answer: '', loading: true, completing: false, report: null, error: '' })
+    try {
+      const response = await fetch('/api/interview-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: interviewSetup }) })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || '模拟面试创建失败。')
+      setInterview({ session: payload.session, turns: [], answer: '', loading: false, completing: false, report: null, error: '' })
+    } catch (error) {
+      setInterview(null)
+      window.alert(error instanceof Error ? error.message : '模拟面试创建失败。')
+    }
+  }
+
+  const submitInterviewTurn = async () => {
+    if (!interview?.session?.id || !interview.answer.trim()) return
+    const current = interview.session.blueprint[interview.session.currentIndex]
+    if (!current) return
+    setInterview({ ...interview, loading: true })
+    try {
+      const response = await fetch(`/api/interview-sessions/${interview.session.id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: current.stage, question: current.question, answerText: interview.answer }) })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || '回答保存失败。')
+      const next = { ...interview.session, currentIndex: Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1), stage: interview.session.blueprint[Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1)]?.stage || current.stage }
+      const nextTurns = [...interview.turns, payload.turn]
+      if (interview.session.currentIndex === interview.session.blueprint.length - 1) {
+        const reviewResponse = await fetch(`/api/interview-sessions/${interview.session.id}/complete`, { method: 'POST' })
+        const reviewPayload = await reviewResponse.json()
+        if (!reviewResponse.ok) throw new Error(reviewPayload.error || '复盘生成失败。')
+        setInterview({ ...interview, session: reviewPayload.session, turns: nextTurns, answer: '', loading: false, completing: false, report: reviewPayload.report, error: '' })
+      } else {
+        setInterview({ ...interview, session: next, turns: nextTurns, answer: '', loading: false, completing: false, report: null, error: '' })
+      }
+      setInterviewVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
+    } catch (error) {
+      setInterview({ ...interview, loading: false, error: error instanceof Error ? error.message : '回答保存失败。' })
+    }
+  }
+
+  const completeInterview = async () => {
+    if (!interview?.session?.id) return
+    setInterview({ ...interview, completing: true, error: '' })
+    try {
+      const response = await fetch(`/api/interview-sessions/${interview.session.id}/complete`, { method: 'POST' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || '复盘生成失败。')
+      setInterview({ ...interview, session: payload.session, completing: false, report: payload.report, error: '' })
+    } catch (error) {
+      setInterview({ ...interview, completing: false, error: error instanceof Error ? error.message : '复盘生成失败。' })
+    }
+  }
+
+  const recordInterview = async () => {
+    if (interviewVoice.recording) { interviewRecorderRef.current?.stop(); return }
+    if (!navigator.mediaDevices?.getUserMedia || !interview) { setInterviewVoice({ recording: false, transcribing: false, audioUrl: '', error: '当前浏览器不支持录音，请使用文字回答。' }); return }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      interviewChunksRef.current = []
+      recorder.ondataavailable = (event) => { if (event.data.size) interviewChunksRef.current.push(event.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop())
+        const blob = new Blob(interviewChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        const audioUrl = URL.createObjectURL(blob)
+        setInterviewVoice({ recording: false, transcribing: true, audioUrl, error: '' })
+        try {
+          const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = ''; const chunkSize = 0x8000
+          for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+          const response = await fetch('/api/stt/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64: btoa(binary), mimeType: blob.type }) })
+          const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '语音转写失败。')
+          setInterview((current) => current ? { ...current, answer: current.answer ? `${current.answer}\n${payload.text}` : payload.text } : current)
+          setInterviewVoice({ recording: false, transcribing: false, audioUrl, error: '' })
+        } catch (error) { setInterviewVoice({ recording: false, transcribing: false, audioUrl, error: error instanceof Error ? error.message : '语音转写失败，请改用文字回答。' }) }
+      }
+      interviewRecorderRef.current = recorder; recorder.start(); setInterviewVoice({ recording: true, transcribing: false, audioUrl: '', error: '' })
+    } catch { setInterviewVoice({ recording: false, transcribing: false, audioUrl: '', error: '无法访问麦克风，请改用文字回答。' }) }
+  }
+
   const submitPractice = async () => {
     if (!practice || !practice.answer.trim()) return
     const current = questions.find((question) => question.id === practice.questionIds[practice.index])
@@ -344,6 +430,15 @@ function App() {
     const current = questions.find((question) => question.id === practice.questionIds[practice.index])
     if (!current) return null
     return <div className="practice-page"><header className="page-header practice-header"><div><p className="eyebrow">Practice session</p><h1>刷题</h1><p className="page-description">第 {practice.index + 1} / {practice.questionIds.length} 题 · {current.category}</p></div><button className="quiet-button" type="button" onClick={() => { resetVoice(); setPractice(null) }}>退出练习</button></header><div className="practice-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2>{practice.submitted && practice.score ? <div className="score-panel"><div className="score-number"><strong>{practice.score.score}</strong><span>/ 100</span><small>{practice.score.source === 'llm' ? 'AI 评分' : '基础评分'}</small></div><div className="score-feedback"><div><h3>做得不错</h3><ul>{practice.score.strengths.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>可以补足</h3><ul>{practice.score.gaps.map((item) => <li key={item}>{item}</li>)}</ul></div></div>{practice.score.betterAnswer && <div className="better-answer"><h3>建议回答</h3><p>{practice.score.betterAnswer}</p></div>}</div> : <><div className="voice-answer"><div className="voice-controls"><button className={voice.recording ? 'record-button recording' : 'record-button'} type="button" onClick={voice.recording ? stopRecording : () => void startRecording()}>{voice.recording ? <><span className="record-dot" />停止录音</> : <><Mic2 size={15} />开始录音</>}</button>{voice.audioUrl && <><audio controls src={voice.audioUrl} /><button className="quiet-button" type="button" onClick={resetVoice}>重新录音</button></>}{voice.transcribing && <span className="voice-status">正在转写…</span>}</div>{voice.error && <p className="voice-error">{voice.error}</p>}<p className="voice-hint">支持语音回答；转写失败时仍可直接输入文字。</p></div><textarea className="practice-answer" value={practice.answer} onChange={(event) => setPractice({ ...practice, answer: event.target.value })} placeholder="用自己的话回答，支持 Markdown 或纯文本…" /><div className="practice-submit"><span>{practice.answer.length} 字</span><button className="primary-button" type="button" disabled={practice.scoring || voice.recording || voice.transcribing || !practice.answer.trim()} onClick={() => void submitPractice()}>{practice.scoring ? '评分中…' : '提交回答'} <Sparkles size={13} /></button></div></>}{practice.submitted && <div className="practice-next"><button className="quiet-button" type="button" onClick={() => { resetVoice(); setPractice(null) }}>结束</button><button className="primary-button" type="button" onClick={() => { resetVoice(); setPractice({ ...practice, index: practice.index + 1, answer: '', submitted: false, scoring: false, score: null }) }}>{practice.index < practice.questionIds.length - 1 ? '下一题' : '完成练习'} <ArrowRight size={13} /></button></div>}</div></div>
+  }
+
+  const renderInterview = () => {
+    if (!interview) return <div className="interview-setup"><p className="eyebrow">Interview workspace / 04</p><h1>模拟面试</h1><p className="page-description">引用你的简历、项目素材和 JD，生成一场覆盖项目题、八股、场景题和反问的完整面试。</p><div className="interview-form"><label><span>目标岗位</span><input value={interviewSetup.role} onChange={(event) => setInterviewSetup({ ...interviewSetup, role: event.target.value })} placeholder="例如：高级前端工程师" /></label><label><span>公司（可选）</span><input value={interviewSetup.company} onChange={(event) => setInterviewSetup({ ...interviewSetup, company: event.target.value })} placeholder="例如：某互联网公司" /></label><label className="full-field"><span>岗位 JD</span><textarea rows={6} value={interviewSetup.jd} onChange={(event) => setInterviewSetup({ ...interviewSetup, jd: event.target.value })} placeholder="粘贴岗位职责和任职要求" /></label><label className="full-field"><span>简历或项目素材</span><textarea rows={8} value={interviewSetup.resume} onChange={(event) => setInterviewSetup({ ...interviewSetup, resume: event.target.value })} placeholder="允许引用原始简历内容，也可以粘贴项目素材" /></label><label><span>面试时长</span><select value={interviewSetup.duration} onChange={(event) => setInterviewSetup({ ...interviewSetup, duration: event.target.value })}><option>15 分钟</option><option>30 分钟</option><option>45 分钟</option></select></label><label><span>难度</span><select value={interviewSetup.difficulty} onChange={(event) => setInterviewSetup({ ...interviewSetup, difficulty: event.target.value })}><option>简单</option><option>中等</option><option>困难</option></select></label></div><button className="primary-button" type="button" disabled={!interviewSetup.role.trim() && !interviewSetup.jd.trim()} onClick={() => void startInterview()}>生成面试并开始 <Sparkles size={13} /></button></div>
+    if (interview.loading && !interview.session.id) return <div className="interview-setup"><p className="eyebrow">Interview session</p><h1>正在准备面试</h1><p className="page-description">正在根据岗位、JD 和简历生成问题蓝图…</p></div>
+    if (interview.report) return <div className="interview-page"><header className="page-header interview-header"><div><p className="eyebrow">Interview review</p><h1>模拟面试复盘</h1><p className="page-description">共完成 {interview.turns.length} 轮回答 · {interviewSetup.role || '目标岗位'}</p></div><button className="quiet-button" type="button" onClick={() => setInterview(null)}>新建一场</button></header><div className="review-grid"><section className="review-summary"><span className="review-score-label">本次总结</span><p>{interview.report.summary}</p></section><section><h3>做得好的地方</h3><ul>{interview.report.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>需要注意</h3><ul>{interview.report.risks.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>下一步训练</h3><ul>{interview.report.suggestions.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>推荐重练题</h3><ul>{interview.report.nextQuestions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></div>
+    const current = interview.session.blueprint[interview.session.currentIndex]
+    if (!current) return null
+    return <div className="interview-page"><header className="page-header interview-header"><div><p className="eyebrow">Live interview · {interviewSetup.duration}</p><h1>模拟面试</h1><p className="page-description">第 {interview.session.currentIndex + 1} / {interview.session.blueprint.length} 轮 · {current.kind}</p></div><button className="quiet-button" type="button" onClick={() => setInterview(null)}>退出面试</button></header><div className="interview-card"><div className="stage-track">{interview.session.blueprint.map((item, index) => <span key={`${item.stage}-${index}`} className={index < interview.session.currentIndex ? 'done' : index === interview.session.currentIndex ? 'current' : ''}>{item.kind}</span>)}</div><span className="tag">{current.kind}</span><h2>{current.question}</h2><p className="interview-focus">考察重点：{current.focus}</p><div className="voice-answer"><div className="voice-controls"><button className={interviewVoice.recording ? 'record-button recording' : 'record-button'} type="button" onClick={() => void recordInterview()}>{interviewVoice.recording ? <><span className="record-dot" />停止录音</> : <><Mic2 size={15} />语音回答</>}</button>{interviewVoice.audioUrl && <audio controls src={interviewVoice.audioUrl} />}{interviewVoice.transcribing && <span className="voice-status">正在转写…</span>}</div>{interviewVoice.error && <p className="voice-error">{interviewVoice.error}</p>}<p className="voice-hint">可以语音回答，也可以直接输入文字；两种回答会进入同一份面试记录。</p></div><textarea className="practice-answer" value={interview.answer} onChange={(event) => setInterview({ ...interview, answer: event.target.value })} placeholder="像真实面试一样回答，建议先说结论，再讲过程和结果…" /><div className="practice-submit"><span>{interview.answer.length} 字</span><button className="primary-button" type="button" disabled={interview.loading || interviewVoice.recording || interviewVoice.transcribing || !interview.answer.trim()} onClick={() => void submitInterviewTurn()}>{interview.loading ? '记录中…' : interview.session.currentIndex === interview.session.blueprint.length - 1 ? '记录并进入复盘' : '提交回答'} <ArrowRight size={13} /></button></div>{interview.error && <p className="voice-error">{interview.error}</p>}{interview.session.currentIndex > 0 && <div className="turn-history"><h3>已完成回答</h3>{interview.turns.slice(-3).map((turn, index) => <div key={`${turn.question}-${index}`}><span>{turn.stage}</span><p>{turn.answerText}</p></div>)}</div>}<div className="interview-footer"><button className="quiet-button" type="button" onClick={() => void completeInterview()} disabled={interview.completing}>{interview.completing ? '生成复盘中…' : '提前结束并复盘'}</button></div></div></div>
   }
 
   const renderLibrary = () => (
@@ -409,7 +504,7 @@ function App() {
       <div className="sidebar-bottom"><button type="button"><Settings size={15} />设置</button><div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '本地数据模式'}</div><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
     <main className="main-content">
-      {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : activeNav === 'practice' ? renderPractice() : <div className="placeholder-page"><p className="eyebrow">Interview workspace</p><h1>{navItems.find((item) => item.id === activeNav)?.label}</h1><p>这一板块正在接入题库数据。先从题库选择内容，准备你的下一轮练习。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>}
+      {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : activeNav === 'practice' ? renderPractice() : renderInterview()}
     </main>
     {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">

@@ -45,6 +45,26 @@ database.exec(`
     score_json TEXT,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS interview_sessions (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'setup' CHECK (status IN ('setup', 'active', 'completed')),
+    stage TEXT NOT NULL DEFAULT 'self_introduction',
+    profile TEXT NOT NULL DEFAULT '{}',
+    blueprint TEXT NOT NULL DEFAULT '[]',
+    current_index INTEGER NOT NULL DEFAULT 0,
+    report_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS interview_turns (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    question TEXT NOT NULL,
+    answer_text TEXT NOT NULL DEFAULT '',
+    score_json TEXT,
+    created_at TEXT NOT NULL
+  );
 `)
 
 const now = () => new Date().toISOString()
@@ -127,6 +147,49 @@ export function savePracticeAnswer(sessionId, questionId, answerText, score) {
   const id = crypto.randomUUID()
   database.prepare('INSERT INTO practice_answers (id, session_id, question_id, answer_text, score_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, sessionId, questionId, answerText, score ? JSON.stringify(score) : null, now())
   return { id, sessionId, questionId, answerText, score: score || null }
+}
+
+const toInterview = (row) => row ? ({
+  id: row.id,
+  status: row.status,
+  stage: row.stage,
+  profile: JSON.parse(row.profile || '{}'),
+  blueprint: JSON.parse(row.blueprint || '[]'),
+  currentIndex: row.current_index,
+  report: row.report_json ? JSON.parse(row.report_json) : null,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+}) : null
+
+export function createInterviewSession(profile, blueprint) {
+  const id = crypto.randomUUID()
+  const timestamp = now()
+  database.prepare('INSERT INTO interview_sessions (id, status, stage, profile, blueprint, current_index, created_at, updated_at) VALUES (?, \'active\', ?, ?, ?, 0, ?, ?)').run(id, blueprint[0]?.stage || 'self_introduction', JSON.stringify(profile), JSON.stringify(blueprint), timestamp, timestamp)
+  return getInterviewSession(id)
+}
+
+export function getInterviewSession(id) {
+  return toInterview(database.prepare('SELECT * FROM interview_sessions WHERE id = ?').get(id))
+}
+
+export function saveInterviewTurn(sessionId, turn, score) {
+  const session = getInterviewSession(sessionId)
+  if (!session) return null
+  const id = crypto.randomUUID()
+  database.prepare('INSERT INTO interview_turns (id, session_id, stage, question, answer_text, score_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, sessionId, turn.stage, turn.question, turn.answerText || '', score ? JSON.stringify(score) : null, now())
+  const nextIndex = Math.min(session.currentIndex + 1, Math.max(0, session.blueprint.length - 1))
+  const nextStage = session.blueprint[nextIndex]?.stage || 'candidate_questions'
+  database.prepare('UPDATE interview_sessions SET current_index = ?, stage = ?, updated_at = ? WHERE id = ?').run(nextIndex, nextStage, now(), sessionId)
+  return { id, sessionId, stage: turn.stage, question: turn.question, answerText: turn.answerText || '', score: score || null }
+}
+
+export function completeInterviewSession(sessionId, report) {
+  database.prepare('UPDATE interview_sessions SET status = \'completed\', report_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(report), now(), sessionId)
+  return getInterviewSession(sessionId)
+}
+
+export function listInterviewTurns(sessionId) {
+  return database.prepare('SELECT * FROM interview_turns WHERE session_id = ? ORDER BY created_at ASC').all(sessionId).map((row) => ({ id: row.id, sessionId: row.session_id, stage: row.stage, question: row.question, answerText: row.answer_text, score: row.score_json ? JSON.parse(row.score_json) : null, createdAt: row.created_at }))
 }
 
 export function seedQuestionsIfEmpty() {
