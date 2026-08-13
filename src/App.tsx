@@ -6,6 +6,7 @@ import { llmConfig, llmStatus } from './config/llm'
 import './App.css'
 import type { ResumeProfile, UserProfile } from './types/profile'
 import { ProfileResumePicker } from './components/profile/ProfileResumePicker'
+import { ProfileModal } from './components/profile/ProfileModal'
 
 type Difficulty = '简单' | '中等' | '困难'
 type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
@@ -156,7 +157,6 @@ function App() {
   const [profileRoleInput, setProfileRoleInput] = useState('')
   const [profileResumeRole, setProfileResumeRole] = useState('')
   const [profileResumeUpload, setProfileResumeUpload] = useState({ loading: false, error: '' })
-  const [pendingProfileResume, setPendingProfileResume] = useState<File | null>(null)
   const [resumePickerOpen, setResumePickerOpen] = useState(false)
   const interviewRecorderRef = useRef<MediaRecorder | null>(null)
   const interviewChunksRef = useRef<Blob[]>([])
@@ -406,12 +406,6 @@ function App() {
     } catch (error) { setProfileResumeUpload({ loading: false, error: error instanceof Error ? error.message : '简历解析失败。' }) }
   }
 
-  const chooseProfileResumeFile = (file: File) => {
-    const roles = profileDraft.targetRoles.length ? profileDraft.targetRoles : ['通用']
-    if (roles.length === 1) { void uploadProfileResume(file, roles[0]); return }
-    setPendingProfileResume(file)
-  }
-
   const saveProfile = async () => {
     setProfileSaving(true)
     try {
@@ -422,6 +416,19 @@ function App() {
   }
 
   const openProfile = () => { setProfileDraft(profile); setProfileResumeRole(profile.targetRoles[0] || profile.resumes[0]?.role || '通用'); setProfileOpen(true) }
+
+  const addProfileRole = () => {
+    const role = profileRoleInput.trim()
+    if (!role || profileDraft.targetRoles.includes(role)) return
+    setProfileDraft({ ...profileDraft, targetRoles: [...profileDraft.targetRoles, role].slice(0, 10) })
+    setProfileRoleInput('')
+  }
+
+  const deleteProfileResume = (id: string) => {
+    const nextResumes = profileDraft.resumes.filter((resume) => resume.id !== id)
+    const current = profileDraft.resumes.find((resume) => resume.id === id)
+    setProfileDraft({ ...profileDraft, resumes: nextResumes, resumeText: current?.text === profileDraft.resumeText ? (nextResumes[0]?.text || '') : profileDraft.resumeText, resumeFileName: current?.fileName === profileDraft.resumeFileName ? (nextResumes[0]?.fileName || '') : profileDraft.resumeFileName })
+  }
 
   const useProfileForInterview = () => {
     const resumes = profileDraft.resumes.length ? profileDraft.resumes : (profileDraft.resumeText ? [{ id: 'legacy-default', role: profileDraft.targetRoles[0] || '通用', fileName: profileDraft.resumeFileName, text: profileDraft.resumeText }] : [])
@@ -593,7 +600,6 @@ function App() {
   }
 
   const resumePicker = resumePickerOpen ? <ProfileResumePicker resumes={profile.resumes.length ? profile.resumes : [{ id: 'legacy-default', role: profile.targetRoles[0] || '通用', fileName: profile.resumeFileName || '个人简历', text: profile.resumeText }]} onSelect={applyResumeSelection} onClose={() => setResumePickerOpen(false)} /> : null
-  const uploadRolePicker = pendingProfileResume && <div className="modal-backdrop" role="presentation"><section className="editor-modal resume-picker-modal" role="dialog" aria-modal="true" aria-labelledby="upload-role-title"><div className="modal-header"><div><p className="eyebrow">Resume profile</p><h2 id="upload-role-title">选择简历绑定岗位</h2></div><button className="icon-button" type="button" title="取消" onClick={() => setPendingProfileResume(null)}><X size={18} /></button></div><div className="resume-picker-list">{profileDraft.targetRoles.map((role) => <button key={role} type="button" className="resume-picker-item" onClick={() => { const file = pendingProfileResume; setPendingProfileResume(null); void uploadProfileResume(file, role) }}><strong>{role}</strong><span>{pendingProfileResume.name}</span><ArrowRight size={14} /></button>)}</div></section></div>
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
@@ -605,9 +611,7 @@ function App() {
       {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : activeNav === 'practice' ? renderPractice() : renderInterview()}
     </main>
     {resumePicker}
-    {uploadRolePicker}
-    {pendingProfileResume && <div className="modal-backdrop" role="presentation"><section className="editor-modal resume-picker-modal" role="dialog" aria-modal="true" aria-labelledby="upload-role-title"><div className="modal-header"><div><p className="eyebrow">Resume profile</p><h2 id="upload-role-title">选择简历绑定岗位</h2></div><button className="icon-button" type="button" title="取消" onClick={() => setPendingProfileResume(null)}><X size={18} /></button></div><div className="resume-picker-list">{profileDraft.targetRoles.map((role) => <button key={role} type="button" className="resume-picker-item" onClick={() => { const file = pendingProfileResume; setPendingProfileResume(null); void uploadProfileResume(file, role) }}><strong>{role}</strong><span>{pendingProfileResume.name}</span><ArrowRight size={14} /></button>)}</div></section></div>}
-    {profileOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProfileOpen(false) }}><section className="editor-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-header"><div><p className="eyebrow">Personal profile</p><h2 id="profile-title">个人中心</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setProfileOpen(false)}><X size={18} /></button></div><div className="profile-form"><label><span>姓名</span><input value={profileDraft.name} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} placeholder="例如：穆兰" /></label><label><span>工作年限</span><input type="number" min="0" max="50" step="0.5" value={profileDraft.yearsExperience} onChange={(event) => setProfileDraft({ ...profileDraft, yearsExperience: Number(event.target.value) })} /></label><label className="full-field"><span>个人定位</span><input value={profileDraft.headline} onChange={(event) => setProfileDraft({ ...profileDraft, headline: event.target.value })} placeholder="例如：前端 / AI 应用工程师" /></label><label className="full-field"><span>意向岗位（可设置多个）</span><div className="role-chips">{profileDraft.targetRoles.map((role) => <button key={role} type="button" onClick={() => setProfileDraft({ ...profileDraft, targetRoles: profileDraft.targetRoles.filter((item) => item !== role) })}>{role}<X size={12} /></button>)}</div><div className="role-input"><input value={profileRoleInput} onChange={(event) => setProfileRoleInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && profileRoleInput.trim()) { event.preventDefault(); setProfileDraft({ ...profileDraft, targetRoles: [...profileDraft.targetRoles, profileRoleInput.trim()].slice(0, 10) }); setProfileRoleInput('') } }} placeholder="输入岗位后按 Enter 添加" /><button className="secondary-button" type="button" onClick={() => { if (profileRoleInput.trim()) { setProfileDraft({ ...profileDraft, targetRoles: [...profileDraft.targetRoles, profileRoleInput.trim()].slice(0, 10) }); setProfileRoleInput('') } }}><Plus size={13} />添加</button></div></label><label className="full-field"><span>默认简历</span><input className="resume-file-input" type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onChange={(event) => { const file = event.target.files?.[0]; if (file) chooseProfileResumeFile(file) }} />{profileDraft.resumeFileName && !profileResumeUpload.loading && <small className="upload-status success">已读取：{profileDraft.resumeFileName}</small>}{profileResumeUpload.loading && <small className="upload-status">正在解析简历…</small>}{profileResumeUpload.error && <small className="upload-status error">{profileResumeUpload.error}</small>}<textarea rows={7} value={profileDraft.resumeText} onChange={(event) => setProfileDraft({ ...profileDraft, resumeText: event.target.value })} placeholder="也可以直接粘贴或修改简历文本" /></label></div><div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setProfileOpen(false)}>取消</button><button className="primary-button" type="button" disabled={profileSaving || profileResumeUpload.loading} onClick={() => void saveProfile()}>{profileSaving ? '保存中…' : '保存个人资料'} <Check size={13} /></button></div></section></div>}
+    {profileOpen && <ProfileModal profile={profile} draft={profileDraft} roleInput={profileRoleInput} resumeRole={profileResumeRole} resumeUpload={profileResumeUpload} saving={profileSaving} onRoleInputChange={setProfileRoleInput} onResumeRoleChange={setProfileResumeRole} onDraftChange={setProfileDraft} onAddRole={addProfileRole} onRemoveRole={(role) => setProfileDraft({ ...profileDraft, targetRoles: profileDraft.targetRoles.filter((item) => item !== role) })} onResumeFile={(file, role) => void uploadProfileResume(file, role)} onDeleteResume={deleteProfileResume} onSave={() => void saveProfile()} onClose={() => setProfileOpen(false)} />}
     {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="modal-header"><div><p className="eyebrow">Question editor</p><h2 id="editor-title">{editor.mode === 'create' ? '新建题目' : '编辑题目'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setEditor(null)}><X size={18} /></button></div>
