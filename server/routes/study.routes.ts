@@ -4,6 +4,9 @@ import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { createLearningSession, createPracticeSession, getLearningStats, saveLearningProgress, savePracticeAnswer } from '../db/repositories/study.repository.js'
 import { matchesRoute } from '../http/routing.js'
+import type { Mastery } from '../domain/question.js'
+
+const isMastery = (value: unknown): value is Mastery => value === '未学习' || value === '了解' || value === '熟悉' || value === '掌握'
 
 /** 学习和刷题 session 的 HTTP 适配层。 */
 export async function handleStudyRoutes(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
@@ -17,8 +20,8 @@ export async function handleStudyRoutes(request: IncomingMessage, response: Serv
   if (matchesRoute(request, 'POST', '/api/learning-progress')) {
     try {
       const body = await readJson<{ questionId?: string; mastery?: string; sessionId?: string }>(request)
-      if (!body.questionId || !['未学习', '了解', '熟悉', '掌握'].includes(body.mastery || '')) { jsonResponse(response, 400, { error: 'questionId 和合法的 mastery 必填。' }); return true }
-      const progress = saveLearningProgress(body.questionId, body.mastery || '', body.sessionId)
+      if (!body.questionId || !isMastery(body.mastery)) { jsonResponse(response, 400, { error: 'questionId 和合法的 mastery 必填。' }); return true }
+      const progress = saveLearningProgress(body.questionId, body.mastery, body.sessionId)
       jsonResponse(response, progress ? 201 : 404, progress ? { progress } : { error: '题目不存在。' }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '学习记录保存失败。') }); return true }
   }
