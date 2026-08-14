@@ -8,7 +8,8 @@ import { jsonResponse } from './http/response.js'
 import { completeChat } from './services/llm/client.js'
 import { handleProfileRoutes } from './routes/profile.routes.js'
 import { handleQuestionRoutes } from './routes/questions.routes.js'
-import { completeInterviewSession, createInterviewSession, createLearningSession, createPracticeSession, getInterviewSession, getLearningStats, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn, saveLearningProgress, savePracticeAnswer } from './db.js'
+import { handleInterviewRoutes } from './routes/interview.routes.js'
+import { createLearningSession, createPracticeSession, getLearningStats, saveLearningProgress, savePracticeAnswer } from './db.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -426,6 +427,7 @@ async function handle(request, response) {
       return jsonResponse(response, 400, { error: error.message || '资料解析失败。' })
     }
   }
+  if (await handleInterviewRoutes(request, response, { parseStructuredProfile, generateInterviewBlueprint, scoreAnswer, decideNextAction, generateInterviewReport })) return
   if (await handleQuestionRoutes(request, response)) return
   if (request.method === 'POST' && request.url === '/api/learning-sessions') {
     try {
@@ -467,33 +469,6 @@ async function handle(request, response) {
       return jsonResponse(response, 400, { error: error.message || '回答保存失败。' })
     }
   }
-  if (request.method === 'POST' && request.url === '/api/interview-sessions') {
-    try {
-      const body = JSON.parse(await readBody(request, 2_000_000))
-      if (!body.profile || typeof body.profile !== 'object') return jsonResponse(response, 400, { error: 'profile 必须是对象。' })
-      const rawProfile = body.profile
-      if (rawProfile.jobProfileId || rawProfile.resumeId) {
-        const job = listJobProfiles().find((item) => item.id === rawProfile.jobProfileId)
-        const resume = job?.resumes.find((item) => item.id === rawProfile.resumeId)
-        if (!job) return jsonResponse(response, 400, { error: '选择的岗位不存在。' })
-        if (!resume) return jsonResponse(response, 400, { error: '选择的简历不属于该岗位。' })
-        rawProfile.role = job.title
-        rawProfile.resume = resume.text
-        rawProfile.resumeFileName = resume.fileName
-        rawProfile.candidateProfile = resume.candidateProfile
-      }
-      const structured = rawProfile.candidateProfile || await parseStructuredProfile(String(rawProfile.resume || ''), String(rawProfile.jd || ''), rawProfile)
-      const profile = { ...rawProfile, candidateProfile: structured }
-      const blueprint = await generateInterviewBlueprint(profile)
-      if (!blueprint.length) return jsonResponse(response, 502, { error: '没有生成有效的面试问题。' })
-      return jsonResponse(response, 201, { session: createInterviewSession(profile, blueprint) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' })
-    }
-  }
-  if (request.method === 'GET' && request.url === '/api/interview-sessions') {
-    return jsonResponse(response, 200, { sessions: listInterviewSessions() })
-  }
   if (request.method === 'POST' && request.url === '/api/resume/extract') {
     try {
       const body = JSON.parse(await readBody(request, 12_000_000))
@@ -503,53 +478,6 @@ async function handle(request, response) {
       return jsonResponse(response, 200, { text: text.slice(0, 80_000), fileName: body.fileName })
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '简历解析失败。' })
-    }
-  }
-  if (request.method === 'GET' && request.url.startsWith('/api/interview-sessions/')) {
-    const id = request.url.slice('/api/interview-sessions/'.length).split('/')[0]
-    const session = getInterviewSession(id)
-    if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
-    return jsonResponse(response, 200, { session, turns: listInterviewTurns(id) })
-  }
-  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/turns$/)) {
-    try {
-      const id = request.url.split('/')[3]
-      const body = JSON.parse(await readBody(request, 2_000_000))
-      if (!body.question || typeof body.answerText !== 'string' || !body.answerText.trim()) return jsonResponse(response, 400, { error: 'question 和 answerText 必填。' })
-      let score = null
-      try { score = await scoreAnswer({ title: body.question, answer: body.referenceAnswer || '', interviewAnswer: body.referenceAnswer || '' }, body.answerText) } catch { score = null }
-      return jsonResponse(response, 201, { turn: saveInterviewTurn(id, { stage: body.stage || 'knowledge', question: body.question, answerText: body.answerText }, score) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '面试回答保存失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/next-action$/)) {
-    try {
-      const id = request.url.split('/')[3]
-      const session = getInterviewSession(id)
-      if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
-      const body = JSON.parse(await readBody(request, 2_000_000))
-      if (typeof body.answerText !== 'string' || !body.answerText.trim()) return jsonResponse(response, 400, { error: 'answerText 必填。' })
-      const action = await decideNextAction(session, body.answerText)
-      let nextSession = session
-      if (action.action === 'follow_up') {
-        nextSession = insertInterviewFollowUp(id, { stage: session.stage, kind: action.kind || '发散追问', question: action.question, focus: action.focus || session.blueprint[session.currentIndex]?.focus || '', referenceAnswer: action.referenceAnswer || '', followUps: [] }) || session
-      }
-      return jsonResponse(response, 200, { action, session: nextSession })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '下一步面试动作生成失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url.match(/^\/api\/interview-sessions\/[^/]+\/complete$/)) {
-    try {
-      const id = request.url.split('/')[3]
-      const session = getInterviewSession(id)
-      if (!session) return jsonResponse(response, 404, { error: '模拟面试不存在。' })
-      const turns = listInterviewTurns(id)
-      const report = await generateInterviewReport(session, turns)
-      return jsonResponse(response, 200, { session: completeInterviewSession(id, report), report })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '面试复盘失败。' })
     }
   }
   if (request.method === 'POST' && request.url === '/api/score-answer') {
