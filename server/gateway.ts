@@ -56,10 +56,10 @@ function extractPdfText(binary) {
   })
 }
 
-async function extractResumeText(binary, fileName, mimeType) {
+async function extractResumeText(binary, fileName, mimeType): Promise<string> {
   const lower = fileName.toLowerCase()
-  if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return extractDocxText(binary)
-  if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return extractPdfText(binary)
+  if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return String(await extractDocxText(binary))
+  if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return String(await extractPdfText(binary))
   if (lower.endsWith('.doc') || mimeType === 'application/msword') throw new Error('暂不支持旧版 .doc，请另存为 .docx 或 PDF 后上传。')
   throw new Error('仅支持 .docx 和 .pdf 简历文件。')
 }
@@ -161,7 +161,7 @@ function normalizeStructuredProfile(value, resumeText = '', jdText = '') {
   }
 }
 
-function fallbackStructuredProfile(resumeText = '', jdText = '', existing = {}) {
+function fallbackStructuredProfile(resumeText = '', jdText = '', existing: Record<string, any> = {}) {
   const lines = resumeText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   const projectHeading = lines.findIndex((line) => /项目|project/i.test(line))
   const projectLine = projectHeading >= 0 ? lines[projectHeading + 1] : ''
@@ -171,7 +171,7 @@ function fallbackStructuredProfile(resumeText = '', jdText = '', existing = {}) 
   return normalizeStructuredProfile({ candidate: { name: existing.name || lines[0] || '', headline: existing.headline || '', yearsExperience: existing.yearsExperience || 0, skills, projects: projectLine ? [{ name: projectLine, background: '', responsibilities: [], techStack: skills, challenges: [], solutions: [], results: [], risks: [] }] : [] }, job: { role, responsibilities: [], requiredSkills: [], preferredExperience: [], interviewSignals: [] }, gaps: ['建议补充项目背景、个人职责和量化结果'] }, resumeText, jdText)
 }
 
-async function parseStructuredProfile(resumeText = '', jdText = '', existing = {}) {
+async function parseStructuredProfile(resumeText = '', jdText = '', existing: Record<string, any> = {}) {
   const fallback = fallbackStructuredProfile(resumeText, jdText, existing)
   if (!baseUrl || !model || !apiKey || (!resumeText.trim() && !jdText.trim())) return fallback
   try {

@@ -90,7 +90,7 @@ export function updateCategory(id: string, name: unknown) {
 export function deleteCategory(id: string) {
   const current = findCategoryById.get(id)
   if (!current) return false
-  const count = database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name).count
+  const count = Number(database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name).count)
   if (count > 0) {
     const error = new Error(`分类下还有 ${count} 道题目，不能删除。`) as Error & { code?: string }
     error.code = 'CATEGORY_IN_USE'

@@ -41,8 +41,8 @@ export function listJobProfiles() {
 }
 
 export function getProfile() {
-  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || {
-    id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null,
+  const profile: any = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get()) || {
+    id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null, createdAt: '', updatedAt: '',
   }
   return { ...profile, jobs: listJobProfiles() }
 }
@@ -50,7 +50,7 @@ export function getProfile() {
 export function createJobProfile(title: unknown) {
   const timestamp = now()
   const id = crypto.randomUUID()
-  const hasJobs = database.prepare('SELECT COUNT(*) AS count FROM job_profiles WHERE profile_id = 1').get().count > 0
+  const hasJobs = Number(database.prepare('SELECT COUNT(*) AS count FROM job_profiles WHERE profile_id = 1').get().count) > 0
   const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM job_profiles WHERE profile_id = 1').get().next
   database.prepare('INSERT INTO job_profiles (id, profile_id, title, sort_order, is_default, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?)').run(id, String(title || '').trim(), sortOrder, hasJobs ? 0 : 1, timestamp, timestamp)
   return listJobProfiles().find((job) => job.id === id)

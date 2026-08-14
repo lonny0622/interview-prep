@@ -21,13 +21,13 @@ export function saveLearningProgress(questionId: string, mastery: string, sessio
 export function getLearningStats() {
   const masteryValues = ['未学习', '了解', '熟悉', '掌握']
   const mastery = Object.fromEntries(masteryValues.map((value) => [value, 0]))
-  for (const row of database.prepare('SELECT mastery, COUNT(*) AS count FROM questions GROUP BY mastery').all()) mastery[row.mastery] = Number(row.count)
+  for (const row of database.prepare('SELECT mastery, COUNT(*) AS count FROM questions GROUP BY mastery').all() as any[]) mastery[row.mastery] = Number(row.count)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
   const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(startOfToday.toISOString()).count)
   const totalQuestions = Number(database.prepare('SELECT COUNT(*) AS count FROM questions').get().count)
-  const categories = database.prepare(`SELECT category, mastery, COUNT(*) AS count FROM questions GROUP BY category, mastery ORDER BY category COLLATE NOCASE ASC`).all()
-  const categoryMap = new Map()
+  const categories = database.prepare(`SELECT category, mastery, COUNT(*) AS count FROM questions GROUP BY category, mastery ORDER BY category COLLATE NOCASE ASC`).all() as any[]
+  const categoryMap = new Map<string, any>()
   for (const row of categories) {
     if (!categoryMap.has(row.category)) categoryMap.set(row.category, { name: row.category, total: 0, mastery: Object.fromEntries(masteryValues.map((value) => [value, 0])) })
     const item = categoryMap.get(row.category)

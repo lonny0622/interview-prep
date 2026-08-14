@@ -10,8 +10,7 @@
     "sourceMap": true,
     "strict": false,
     "skipLibCheck": true,
-    "noEmitOnError": true,
-    "noCheck": true
+    "noEmitOnError": true
   },
   "include": ["server/**/*.ts"]
 }
