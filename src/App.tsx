@@ -664,7 +664,7 @@ function App() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
-      <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
+      <div className="profile" role="button" tabIndex={0} onClick={openProfile} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProfile() } }}><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><span className="profile-chevron" aria-hidden="true"><ChevronDown size={14} /></span></div>
       <nav>{navItems.map((item) => { const Icon = item.icon; const learningTodoCount = questions.filter((question) => question.mastery !== '掌握').length; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && learningTodoCount > 0 && <span className="nav-badge">{learningTodoCount}</span>}</button> })}</nav>
       <div className="sidebar-bottom"><button type="button" onClick={openProfile}><Settings size={15} />设置</button><div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '本地数据模式'}</div><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
