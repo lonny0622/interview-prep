@@ -6,7 +6,8 @@ import { appConfig } from './config/env.js'
 import { readBody, readJson } from './http/body.js'
 import { jsonResponse } from './http/response.js'
 import { completeChat } from './services/llm/client.js'
-import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getLearningStats, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, saveLearningProgress, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.js'
+import { handleProfileRoutes } from './routes/profile.routes.js'
+import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createLearningSession, createPracticeSession, deleteCategory, editQuestion, getInterviewSession, getLearningStats, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listQuestions, removeQuestion, saveInterviewTurn, saveLearningProgress, savePracticeAnswer, updateCategory } from './db.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -411,31 +412,7 @@ async function handle(request, response) {
   if (request.method === 'GET' && request.url === '/api/speech/health') {
     return jsonResponse(response, 200, { configured: Boolean(sttBaseUrl && sttModel && sttApiKey), provider: sttProvider || 'openai-compatible', model: sttModel || '' })
   }
-  if (request.method === 'GET' && request.url === '/api/profile') {
-    return jsonResponse(response, 200, { profile: getProfile() })
-  }
-  if (request.method === 'PATCH' && request.url === '/api/profile') {
-    try {
-      const body = JSON.parse(await readBody(request, 500_000))
-      return jsonResponse(response, 200, { profile: updateProfile(body) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '个人资料保存失败。' })
-    }
-  }
-  if (request.method === 'GET' && request.url === '/api/profile/jobs') return jsonResponse(response, 200, { jobs: listJobProfiles() })
-  if (request.method === 'POST' && request.url === '/api/profile/jobs') {
-    try { const body = JSON.parse(await readBody(request)); if (!String(body.title || '').trim()) return jsonResponse(response, 400, { error: '岗位名称不能为空。' }); return jsonResponse(response, 201, { job: createJobProfile(body.title) }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '岗位创建失败。' }) }
-  }
-  if (request.method === 'PATCH' && request.url.match(/^\/api\/profile\/jobs\/[^/]+$/)) {
-    try { const id = request.url.split('/').pop(); const job = updateJobProfile(id, JSON.parse(await readBody(request))); return job ? jsonResponse(response, 200, { job }) : jsonResponse(response, 404, { error: '岗位不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '岗位更新失败。' }) }
-  }
-  if (request.method === 'DELETE' && request.url.match(/^\/api\/profile\/jobs\/[^/]+$/)) { const id = request.url.split('/').pop(); return deleteJobProfile(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '岗位不存在。' }) }
-  if (request.method === 'GET' && request.url.match(/^\/api\/profile\/jobs\/[^/]+\/resumes$/)) { const id = request.url.split('/')[4]; const job = listJobProfiles().find((item) => item.id === id); return job ? jsonResponse(response, 200, { resumes: job.resumes }) : jsonResponse(response, 404, { error: '岗位不存在。' }) }
-  if (request.method === 'POST' && request.url.match(/^\/api\/profile\/jobs\/[^/]+\/resumes$/)) {
-    try { const id = request.url.split('/')[4]; const body = JSON.parse(await readBody(request, 1_500_000)); if (!String(body.text || '').trim()) return jsonResponse(response, 400, { error: '简历文本不能为空。' }); const resume = createResume(id, body); return resume ? jsonResponse(response, 201, { resume }) : jsonResponse(response, 404, { error: '岗位不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '简历保存失败。' }) }
-  }
-  if (request.method === 'PATCH' && request.url.match(/^\/api\/profile\/resumes\/[^/]+$/)) { try { const id = request.url.split('/').pop(); const resume = updateResume(id, JSON.parse(await readBody(request))); return resume ? jsonResponse(response, 200, { resume }) : jsonResponse(response, 404, { error: '简历不存在。' }) } catch (error) { return jsonResponse(response, 400, { error: error.message || '简历更新失败。' }) } }
-  if (request.method === 'DELETE' && request.url.match(/^\/api\/profile\/resumes\/[^/]+$/)) { const id = request.url.split('/').pop(); return deleteResume(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '简历不存在。' }) }
+  if (await handleProfileRoutes(request, response)) return
   if (request.method === 'POST' && request.url === '/api/profile/parse') {
     try {
       const body = JSON.parse(await readBody(request, 1_500_000))
