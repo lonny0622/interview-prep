@@ -1,0 +1,170 @@
+/*
+ * InterviewPrep design tokens
+ *
+ * The product currently ships one learner-facing web surface. The admin and
+ * verification-center scopes are defined here so future surfaces can consume
+ * the same contract without copying colors, spacing, or state semantics.
+ * Apply one of these attributes to a surface root when it is introduced:
+ *   data-surface="frontend" | "admin" | "verification"
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Typography */
+  --font-family-sans: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 12px;
+  --font-size-lg: 13px;
+  --font-size-xl: 16px;
+  --font-size-2xl: 22px;
+  --font-size-display: 38px;
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.6;
+  --line-height-relaxed: 1.8;
+
+  /* Primitive palette */
+  --color-neutral-0: #ffffff;
+  --color-neutral-25: #fbfcfe;
+  --color-neutral-50: #f6f7f9;
+  --color-neutral-100: #f1f3f6;
+  --color-neutral-150: #eef0f3;
+  --color-neutral-200: #e3e7ed;
+  --color-neutral-300: #cbd3df;
+  --color-neutral-500: #778397;
+  --color-neutral-600: #607088;
+  --color-neutral-700: #475467;
+  --color-neutral-800: #2f3b4d;
+  --color-neutral-900: #1d2838;
+
+  --color-brand-50: #edf3ff;
+  --color-brand-100: #d7e4fc;
+  --color-brand-200: #ccdaf6;
+  --color-brand-300: #a8c2f4;
+  --color-brand-500: #2d6cdf;
+  --color-brand-600: #245dca;
+
+  --color-success-50: #eef9f4;
+  --color-success-100: #c7e9da;
+  --color-success-600: #278568;
+  --color-success-700: #216f57;
+  --color-warning-50: #fff7eb;
+  --color-warning-100: #f2d9b6;
+  --color-warning-600: #bd7925;
+  --color-danger-50: #fff8f8;
+  --color-danger-100: #ecc7ca;
+  --color-danger-600: #c25d62;
+  --color-info-50: #f0f5ff;
+  --color-info-600: #4678bd;
+
+  /* Shared semantic contract; frontend is the default surface. */
+  --surface-canvas: var(--color-neutral-50);
+  --surface-panel: var(--color-neutral-0);
+  --surface-panel-raised: var(--color-neutral-0);
+  --surface-sidebar: var(--color-neutral-0);
+  --surface-muted: #f6f8fa;
+  --surface-inverse: var(--color-neutral-900);
+  --text-primary: var(--color-neutral-900);
+  --text-secondary: var(--color-neutral-600);
+  --text-tertiary: var(--color-neutral-500);
+  --text-placeholder: #9aa6b6;
+  --text-on-primary: var(--color-neutral-0);
+  --text-on-inverse: var(--color-neutral-0);
+  --border-subtle: var(--color-neutral-150);
+  --border-default: var(--color-neutral-200);
+  --border-strong: var(--color-neutral-300);
+  --action-primary: var(--color-brand-500);
+  --action-primary-hover: var(--color-brand-600);
+  --action-primary-subtle: var(--color-brand-50);
+  --action-secondary-border: var(--color-brand-200);
+  --focus-ring: #edf3ff;
+  --status-success: var(--color-success-600);
+  --status-success-subtle: var(--color-success-50);
+  --status-warning: var(--color-warning-600);
+  --status-warning-subtle: var(--color-warning-50);
+  --status-danger: var(--color-danger-600);
+  --status-danger-subtle: var(--color-danger-50);
+  --status-info: var(--color-info-600);
+  --status-info-subtle: var(--color-info-50);
+
+  /* Layout and interaction */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-14: 56px;
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --radius-xl: 8px;
+  --radius-2xl: 10px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 3px 8px rgba(42, 58, 80, .05);
+  --shadow-md: 0 10px 28px rgba(42, 58, 80, .05);
+  --shadow-lg: 0 24px 70px rgba(24, 33, 46, .24);
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --z-navigation: 10;
+  --z-modal: 20;
+  --z-confirmation: 30;
+
+  /* Compatibility aliases used by the existing page styles. */
+  --ink: var(--text-primary);
+  --muted: var(--text-tertiary);
+  --line: var(--border-default);
+  --soft: var(--surface-muted);
+  --blue: var(--action-primary);
+  --blue-soft: var(--action-primary-subtle);
+  --green: var(--status-success);
+  --amber: var(--status-warning);
+  --rose: var(--status-danger);
+}
+
+/* Management backend: denser canvas and stronger navigation contrast. */
+[data-surface='admin'],
+[data-surface='backend'] {
+  --surface-canvas: #f1f4f8;
+  --surface-panel: var(--color-neutral-0);
+  --surface-panel-raised: var(--color-neutral-0);
+  --surface-sidebar: var(--color-neutral-900);
+  --surface-muted: #eef1f5;
+  --surface-inverse: var(--color-neutral-900);
+  --text-primary: var(--color-neutral-900);
+  --text-secondary: var(--color-neutral-600);
+  --text-tertiary: var(--color-neutral-500);
+  --text-on-inverse: var(--color-neutral-0);
+  --border-default: #dce2ea;
+  --action-primary: var(--color-brand-600);
+  --action-primary-hover: #1f50ae;
+  --action-primary-subtle: var(--color-brand-50);
+}
+
+/* Verification center: keep state and evidence readable at a glance. */
+[data-surface='verification'],
+[data-surface='verify'] {
+  --surface-canvas: #f4f7fb;
+  --surface-panel: var(--color-neutral-0);
+  --surface-panel-raised: var(--color-neutral-0);
+  --surface-sidebar: #21334e;
+  --surface-muted: var(--color-info-50);
+  --surface-inverse: #21334e;
+  --text-primary: var(--color-neutral-900);
+  --text-secondary: #52647e;
+  --text-tertiary: #7c8da9;
+  --text-on-inverse: var(--color-neutral-0);
+  --border-default: #d7e4fc;
+  --action-primary: #4678bd;
+  --action-primary-hover: #3b67a2;
+  --action-primary-subtle: var(--color-info-50);
+  --focus-ring: #e6efff;
+}
