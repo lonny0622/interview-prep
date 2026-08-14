@@ -1,8 +1,5 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { appConfig } from './config/env.js'
 import { readBody } from './http/body.js'
 import { jsonResponse } from './http/response.js'
@@ -15,6 +12,8 @@ import { handleInterviewRoutes } from './routes/interview.routes.js'
 import { handleStudyRoutes } from './routes/study.routes.js'
 import { handleLlmRoutes } from './routes/llm.routes.js'
 import { handleMediaRoutes } from './routes/media.routes.js'
+import { extractResumeText as extractResumeTextFile } from './services/media/document.js'
+import { transcribeAudio as transcribeAudioFile } from './services/media/speech.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -24,80 +23,6 @@ const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"cla
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
 const profileSchema = '{"candidate":{"name":"","headline":"","yearsExperience":0,"skills":[""],"experiences":[{"company":"","title":"","period":"","responsibilities":[""]}],"projects":[{"name":"","background":"","responsibilities":[""],"techStack":[""],"challenges":[""],"solutions":[""],"results":[""],"risks":[""]}]},"job":{"role":"","responsibilities":[""],"requiredSkills":[""],"preferredExperience":[""],"interviewSignals":[""]},"gaps":[""]}'
-
-function extractDocxText(binary: Buffer): Promise<string> {
-  const tempDir = mkdtempSync(join(rootDir, '.resume-'))
-  const inputPath = join(tempDir, 'resume.docx')
-  writeFileSync(inputPath, binary)
-  const unzip = spawn('unzip', ['-p', inputPath, 'word/document.xml'])
-  return new Promise((resolveText, rejectText) => {
-      const output: Buffer[] = []; const errors: Buffer[] = []
-      unzip.stdout.on('data', (chunk) => output.push(chunk)); unzip.stderr.on('data', (chunk) => errors.push(chunk))
-      unzip.on('error', rejectText)
-      unzip.on('close', (code) => {
-        if (code !== 0) { rmSync(tempDir, { recursive: true, force: true }); return rejectText(new Error(`DOCX 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`)) }
-        const xml = Buffer.concat(output).toString('utf8')
-        rmSync(tempDir, { recursive: true, force: true })
-        resolveText(xml.replace(/<w:tab\s*\/?>(\s*)/g, '\t').replace(/<w:br\s*\/?>(\s*)/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+\n/g, '\n').trim())
-      })
-  })
-}
-
-function extractPdfText(binary: Buffer): Promise<string> {
-  const tempDir = mkdtempSync(join(rootDir, '.resume-'))
-  const inputPath = join(tempDir, 'resume.pdf')
-  writeFileSync(inputPath, binary)
-  return new Promise((resolveText, rejectText) => {
-    const process = spawn('textutil', ['-convert', 'txt', '-stdout', inputPath])
-    const output: Buffer[] = []; const errors: Buffer[] = []
-    process.stdout.on('data', (chunk) => output.push(chunk)); process.stderr.on('data', (chunk) => errors.push(chunk))
-    process.on('close', (code) => {
-      rmSync(tempDir, { recursive: true, force: true })
-      if (code === 0) resolveText(Buffer.concat(output).toString('utf8').trim())
-      else rejectText(new Error(`PDF 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`))
-    })
-  })
-}
-
-async function extractResumeText(binary: Buffer, fileName: string, mimeType: string): Promise<string> {
-  const lower = fileName.toLowerCase()
-  if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return String(await extractDocxText(binary))
-  if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return String(await extractPdfText(binary))
-  if (lower.endsWith('.doc') || mimeType === 'application/msword') throw new Error('暂不支持旧版 .doc，请另存为 .docx 或 PDF 后上传。')
-  throw new Error('仅支持 .docx 和 .pdf 简历文件。')
-}
-
-function convertToWav(binary: Buffer, mimeType: string): Promise<Buffer> {
-  if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav' || mimeType === 'audio/wave') return Promise.resolve(binary)
-  return new Promise((resolveConversion, rejectConversion) => {
-    const process = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'])
-    const output: Buffer[] = []
-    const errors: Buffer[] = []
-    process.stdout.on('data', (chunk) => output.push(chunk))
-    process.stderr.on('data', (chunk) => errors.push(chunk))
-    process.on('error', (error) => rejectConversion(new Error(`音频格式转换失败，请确认已安装 ffmpeg（${error.message}）。`)))
-    process.on('close', (code) => {
-      if (code === 0 && output.length) return resolveConversion(Buffer.concat(output))
-      rejectConversion(new Error(`音频格式转换失败：${Buffer.concat(errors).toString('utf8').trim() || `ffmpeg 退出码 ${code}`}。`))
-    })
-    process.stdin.end(binary)
-  })
-}
-
-async function transcribeAudio(audioBase64: string, mimeType = 'audio/webm'): Promise<string> {
-  if (!sttBaseUrl || !sttModel || !sttApiKey) throw new Error('语音转写服务尚未配置。')
-  const binary = Buffer.from(audioBase64, 'base64')
-  if (!binary.length) throw new Error('录音内容为空。')
-  const wav = await convertToWav(binary, mimeType)
-  const form = new FormData()
-  form.append('file', new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), 'answer.wav')
-  form.append('model', sttModel)
-  const response = await fetch(`${sttBaseUrl}/v1/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${sttApiKey}` }, body: form })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.error?.message || `语音转写请求失败（${response.status}）。`)
-  if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('语音服务没有返回转写文本。')
-  return payload.text.trim()
-}
 
 function normalizeBlueprint(value: any) {
   if (!Array.isArray(value)) throw new Error('模型返回的问题蓝图不是数组。')
@@ -382,7 +307,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return
   }
   if (await handleLlmRoutes(request, response, { baseUrl, model, importModel, apiKey, provider }, { callModel, normalizeQuestionOutline, enrichQuestionBatch, scoreAnswer, fallbackScore })) return
-  if (await handleMediaRoutes(request, response, { sttBaseUrl, sttModel, sttApiKey, sttProvider }, { extractResumeText, transcribeAudio })) return
+  if (await handleMediaRoutes(request, response, { sttBaseUrl, sttModel, sttApiKey, sttProvider }, {
+    extractResumeText: (binary, fileName, mimeType) => extractResumeTextFile(binary, fileName, mimeType, rootDir),
+    transcribeAudio: (audioBase64, mimeType) => transcribeAudioFile(audioBase64, mimeType, { baseUrl: sttBaseUrl, model: sttModel, apiKey: sttApiKey, ffmpegPath }),
+  })) return
   if (await handleProfileRoutes(request, response)) return
   if (request.method === 'POST' && request.url === '/api/profile/parse') {
     try {

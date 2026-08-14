@@ -1,7 +1,6 @@
 import { Check, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { useState } from 'react'
 import { profileApi } from '../../api/profileApi'
-import { apiRequest } from '../../api/http'
 import type { JobProfile, ResumeProfile, UserProfile } from '../../types/profile'
 
 type Props = {
@@ -18,10 +17,7 @@ async function extractResume(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   let binary = ''
   for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
-  const payload = await apiRequest<{ text?: string }>('/api/resume/extract', {
-    method: 'POST',
-    body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) }),
-  })
+  const payload = await profileApi.extractResume({ fileName: file.name, mimeType: file.type, fileBase64: btoa(binary) })
   return String(payload.text || '')
 }
 

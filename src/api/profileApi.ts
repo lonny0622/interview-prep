@@ -2,6 +2,7 @@ import type { JobProfile, ResumeProfile, UserProfile } from '../types/profile'
 import { apiRequest } from './http'
 
 export const profileApi = {
+  extractResume: (payload: { fileName: string; mimeType: string; fileBase64: string }) => apiRequest<{ text?: string }>('/api/resume/extract', { method: 'POST', body: JSON.stringify(payload) }),
   get: () => apiRequest<{ profile: UserProfile }>('/api/profile'),
   update: (profile: UserProfile) => apiRequest<{ profile: UserProfile }>('/api/profile', { method: 'PATCH', body: JSON.stringify(profile) }),
   listJobs: () => apiRequest<{ jobs: JobProfile[] }>('/api/profile/jobs'),
