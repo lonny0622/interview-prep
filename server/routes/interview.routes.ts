@@ -3,13 +3,14 @@ import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { matchesRoute, pathSegment } from '../http/routing.js'
+import type { ScoreQuestion, ScoreResult } from '../domain/question.js'
 import { createInterviewSession, completeInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from '../db/repositories/interview.repository.js'
 import { listJobProfiles } from '../db/repositories/profile.repository.js'
 
 type InterviewServices = {
   parseStructuredProfile: (resumeText: string, jdText: string, existing: any) => Promise<any>
   generateInterviewBlueprint: (profile: any) => Promise<any[]>
-  scoreAnswer: (question: any, answer: string) => Promise<any>
+  scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
   decideNextAction: (session: any, answer: string) => Promise<any>
   generateInterviewReport: (session: any, turns: any[]) => Promise<any>
 }

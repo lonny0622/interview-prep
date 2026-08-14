@@ -3,13 +3,14 @@ import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { matchesRoute } from '../http/routing.js'
+import type { QuestionDraft, QuestionOutline, ScoreQuestion, ScoreResult } from '../domain/question.js'
 
 type LlmServices = {
-  callModel: (source: string) => Promise<any[]>
-  normalizeQuestionOutline: (questions: unknown, category: string) => any[]
-  enrichQuestionBatch: (questions: any[], category: string) => Promise<any[]>
-  scoreAnswer: (question: any, answer: string) => Promise<any>
-  fallbackScore: (question: any, answer: string) => any
+  callModel: (source: string) => Promise<QuestionDraft[]>
+  normalizeQuestionOutline: (questions: unknown, category: string) => QuestionOutline[]
+  enrichQuestionBatch: (questions: QuestionOutline[], category: string) => Promise<QuestionDraft[]>
+  scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
+  fallbackScore: (question: ScoreQuestion, answer: string) => ScoreResult
 }
 
 type LlmConfig = { baseUrl: string; model: string; importModel: string; apiKey: string; provider: string }
@@ -42,7 +43,7 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
   }
   if (matchesRoute(request, 'POST', '/api/score-answer')) {
     try {
-      const body = await readJson<{ question?: any; answer?: string }>(request)
+      const body = await readJson<{ question?: ScoreQuestion; answer?: string }>(request)
       if (!body.question || typeof body.answer !== 'string' || !body.answer.trim()) { jsonResponse(response, 400, { error: 'question 和 answer 必填。' }); return true }
       let score
       try { score = { ...(await services.scoreAnswer(body.question, body.answer)), source: 'llm' } } catch (error) { score = { ...services.fallbackScore(body.question, body.answer), fallbackReason: errorMessage(error) } }

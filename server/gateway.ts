@@ -15,6 +15,7 @@ import { parseStructuredProfile as parseStructuredProfileService } from './servi
 import { decideNextAction as decideNextActionService, generateInterviewBlueprint as generateInterviewBlueprintService, generateInterviewReport as generateInterviewReportService } from './services/interview/orchestrator.js'
 import { enrichQuestionBatch as enrichQuestionBatchService, normalizeQuestionOutline, parseQuestionSource } from './services/llm/questions.js'
 import { fallbackScore, scoreAnswer as scoreAnswerService } from './services/llm/scoring.js'
+import type { QuestionOutline, ScoreQuestion } from './domain/question.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -24,8 +25,8 @@ const generateInterviewBlueprint = (profile: any) => generateInterviewBlueprintS
 const decideNextAction = (session: any, answer: string) => decideNextActionService(session, answer, llmConfig)
 const generateInterviewReport = (session: any, turns: any[]) => generateInterviewReportService(session, turns, llmConfig)
 const callModel = (source: string) => parseQuestionSource(source, importModel)
-const enrichQuestionBatch = (outlines: any[], category: string) => enrichQuestionBatchService(outlines, category, importModel)
-const scoreAnswer = (question: any, answer: string) => scoreAnswerService(question, answer, model)
+const enrichQuestionBatch = (outlines: QuestionOutline[], category: string) => enrichQuestionBatchService(outlines, category, importModel)
+const scoreAnswer = (question: ScoreQuestion, answer: string) => scoreAnswerService(question, answer, model)
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.method === 'OPTIONS') {

@@ -4,6 +4,7 @@ import { jsonResponse } from '../http/response.js'
 import { errorCode, errorMessage } from '../http/errors.js'
 import { lastPathSegment, matchesRoute } from '../http/routing.js'
 import { createCategory, createQuestions, deleteCategory, editQuestion, listCategories, listQuestions, removeQuestion, updateCategory } from '../db/repositories/question.repository.js'
+import type { QuestionDraft, QuestionPatch } from '../domain/question.js'
 
 /** 题库和分类的 HTTP 适配层。筛选、持久化和分类规则不再和 gateway 混在一起。 */
 export async function handleQuestionRoutes(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
@@ -24,13 +25,13 @@ export async function handleQuestionRoutes(request: IncomingMessage, response: S
   }
   if (matchesRoute(request, 'POST', '/api/questions')) {
     try {
-      const body = await readJson<{ questions?: unknown[] }>(request)
+      const body = await readJson<{ questions?: QuestionDraft[] }>(request)
       if (!Array.isArray(body.questions) || !body.questions.length) { jsonResponse(response, 400, { error: 'questions 不能为空数组。' }); return true }
       jsonResponse(response, 201, { questions: createQuestions(body.questions) }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目保存失败。') }); return true }
   }
   if (matchesRoute(request, 'PATCH', /^\/api\/questions\/[^/]+$/)) {
-    try { const updated = editQuestion(lastPathSegment(request), await readJson(request)); jsonResponse(response, updated ? 200 : 404, updated ? { question: updated } : { error: '题目不存在。' }); return true } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目更新失败。') }); return true }
+    try { const updated = editQuestion(lastPathSegment(request), await readJson<QuestionPatch>(request)); jsonResponse(response, updated ? 200 : 404, updated ? { question: updated } : { error: '题目不存在。' }); return true } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目更新失败。') }); return true }
   }
   if (matchesRoute(request, 'DELETE', /^\/api\/questions\/[^/]+$/)) { const deleted = removeQuestion(lastPathSegment(request)); jsonResponse(response, deleted ? 204 : 404, deleted ? {} : { error: '题目不存在。' }); return true }
   return false

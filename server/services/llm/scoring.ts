@@ -1,16 +1,11 @@
+import type { ScoreQuestion, ScoreResult } from '../../domain/question.js'
 import { completeChat } from './client.js'
 import { extractJsonObject } from './json.js'
-
-type ScoreQuestion = {
-  title?: unknown
-  answer?: unknown
-  interviewAnswer?: unknown
-}
 
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
 
 /** 使用统一 LLM 客户端评分，保证鉴权、超时和上游错误处理保持一致。 */
-export async function scoreAnswer(question: ScoreQuestion, answer: string, model: string): Promise<any> {
+export async function scoreAnswer(question: ScoreQuestion, answer: string, model: string): Promise<ScoreResult> {
   const content = await completeChat({
     model,
     temperature: 0.1,
@@ -20,11 +15,11 @@ export async function scoreAnswer(question: ScoreQuestion, answer: string, model
       { role: 'user', content: `题目：${String(question.title || '')}\n参考答案：${String(question.answer || '')}\n用户回答：${answer}` },
     ],
   })
-  return extractJsonObject(content, '评分结果不是有效 JSON。')
+  return extractJsonObject<ScoreResult>(content, '评分结果不是有效 JSON。')
 }
 
 /** 无模型可用时按回答长度和参考答案关键词给出保守分数。 */
-export function fallbackScore(question: ScoreQuestion, answer: string) {
+export function fallbackScore(question: ScoreQuestion, answer: string): ScoreResult {
   const normalized = answer.trim()
   const referenceAnswer = String(question.answer || '')
   const lengthScore = Math.min(40, Math.round(normalized.length / 5))
