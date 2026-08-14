@@ -8,6 +8,7 @@
     "gateway": "pnpm gateway:build && node dist-server/gateway.js",
     "gateway:build": "tsc -p tsconfig.server.json",
     "gateway:check": "pnpm gateway:build",
+    "test": "pnpm gateway:build && node --test server/tests/*.test.js",
     "build": "tsc -b && pnpm gateway:build && vite build",
     "lint": "oxlint && eslint .",
     "preview": "vite preview"
