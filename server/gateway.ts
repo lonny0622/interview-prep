@@ -20,7 +20,7 @@ import type { QuestionOutline, ScoreQuestion } from './domain/question.js'
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
 const llmConfig = { baseUrl, model, importModel, apiKey, requestTimeoutMs }
-const parseStructuredProfile = (resumeText: string, jdText: string, existing: Record<string, any>) => parseStructuredProfileService(resumeText, jdText, existing, llmConfig)
+const parseStructuredProfile = (resumeText: string, jdText: string, existing: Record<string, unknown>) => parseStructuredProfileService(resumeText, jdText, existing, llmConfig)
 const generateInterviewBlueprint = (profile: any) => generateInterviewBlueprintService(profile, llmConfig)
 const decideNextAction = (session: any, answer: string) => decideNextActionService(session, answer, llmConfig)
 const generateInterviewReport = (session: any, turns: any[]) => generateInterviewReportService(session, turns, llmConfig)

@@ -4,11 +4,12 @@ import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { matchesRoute, pathSegment } from '../http/routing.js'
 import type { ScoreQuestion, ScoreResult } from '../domain/question.js'
+import type { StructuredProfile } from '../domain/profile.js'
 import { createInterviewSession, completeInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from '../db/repositories/interview.repository.js'
 import { listJobProfiles } from '../db/repositories/profile.repository.js'
 
 type InterviewServices = {
-  parseStructuredProfile: (resumeText: string, jdText: string, existing: any) => Promise<any>
+  parseStructuredProfile: (resumeText: string, jdText: string, existing: Record<string, unknown>) => Promise<StructuredProfile>
   generateInterviewBlueprint: (profile: any) => Promise<any[]>
   scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
   decideNextAction: (session: any, answer: string) => Promise<any>
