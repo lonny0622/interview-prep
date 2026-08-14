@@ -8,10 +8,7 @@
     "rootDir": "server",
     "outDir": "dist-server",
     "sourceMap": true,
-    "strict": false,
-    "strictNullChecks": true,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": true,
+    "strict": true,
     "skipLibCheck": true,
     "noEmitOnError": true
   },
