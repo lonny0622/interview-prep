@@ -58,6 +58,16 @@ export type InterviewTurn = {
   createdAt?: string
 }
 
+export type InterviewViewState = {
+  session: InterviewSession
+  turns: InterviewTurn[]
+  answer: string
+  loading: boolean
+  completing: boolean
+  report: InterviewReport | null
+  error: string
+}
+
 export type SaveInterviewTurnInput = Pick<InterviewTurn, 'stage' | 'question' | 'answerText'> & {
   referenceAnswer: string
 }

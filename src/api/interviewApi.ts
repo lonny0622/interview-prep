@@ -1,8 +1,7 @@
-import type { QuestionRecord } from './questionApi'
+import type { Question, QuestionDraft } from '../types/question'
 import type { InterviewNextAction, InterviewReport, InterviewSession, InterviewSetup, InterviewTurn, SaveInterviewTurnInput, ScoreResult } from '../types/interview'
 import { apiRequest } from './http'
 
-type QuestionDraft = Omit<QuestionRecord, 'id' | 'mastery'>
 type EnrichQuestionsInput = { category: string; questions: Array<{ title: string; difficulty: string }>; source?: string }
 
 export const interviewApi = {
@@ -17,7 +16,7 @@ export const speechApi = {
 }
 
 export const scoringApi = {
-  score: (question: Pick<QuestionRecord, 'title' | 'answer' | 'interviewAnswer'>, answer: string) => apiRequest<{ score: ScoreResult }>('/api/score-answer', { method: 'POST', body: JSON.stringify({ question, answer }) }),
+  score: (question: Pick<Question, 'title' | 'answer' | 'interviewAnswer'>, answer: string) => apiRequest<{ score: ScoreResult }>('/api/score-answer', { method: 'POST', body: JSON.stringify({ question, answer }) }),
 }
 
 export const llmApi = {

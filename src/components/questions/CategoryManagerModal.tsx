@@ -1,12 +1,6 @@
 import { Check, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
-
-export type QuestionCategory = {
-  id: string
-  name: string
-  sortOrder: number
-  questionCount: number
-}
+import type { QuestionCategory } from '../../types/question'
 
 type Props = {
   categories: QuestionCategory[]
