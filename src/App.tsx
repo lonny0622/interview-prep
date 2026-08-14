@@ -14,6 +14,9 @@ import { QuestionImportModal } from './components/questions/QuestionImportModal'
 import type { QuestionImporterState } from './components/questions/QuestionImportModal'
 import { parseQuestionOutline } from './features/questionImport'
 import { profileApi } from './api/profileApi'
+import { questionApi } from './api/questionApi'
+import { studyApi } from './api/studyApi'
+import { interviewApi, llmApi, scoringApi, speechApi } from './api/interviewApi'
 
 type Difficulty = '简单' | '中等' | '困难'
 type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
@@ -186,9 +189,8 @@ function App() {
   }, [questions])
 
   useEffect(() => {
-    fetch('/api/questions')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('题库服务不可用')))
-      .then((payload: { questions: Question[] }) => {
+    questionApi.list()
+      .then((payload) => {
         if (Array.isArray(payload.questions)) {
           setQuestions(payload.questions)
           setSelectedId(payload.questions[0]?.id ?? '')
@@ -199,9 +201,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    fetch('/api/categories')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('分类服务不可用')))
-      .then((payload: { categories: QuestionCategory[] }) => { if (Array.isArray(payload.categories)) setCategoryCatalog(payload.categories) })
+    questionApi.categories()
+      .then((payload) => { if (Array.isArray(payload.categories)) setCategoryCatalog(payload.categories) })
       .catch(() => {})
   }, [])
 
@@ -252,23 +253,21 @@ function App() {
 
   useEffect(() => {
     if (activeNav !== 'learning' || !serverReady || !learningQuestions.length || learningSessionCreatedFor === learningFilterKey) return
-    fetch('/api/learning-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: learningQuestions.map((question) => question.id), filters: learningFilters }) })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习 session 创建失败')))
-      .then((payload: { session: { id: string } }) => { setLearningSessionId(payload.session.id); setLearningSessionCreatedFor(learningFilterKey) })
+    studyApi.createLearningSession(learningQuestions.map((question) => question.id), learningFilters)
+      .then((payload) => { setLearningSessionId(payload.session.id); setLearningSessionCreatedFor(learningFilterKey) })
       .catch(() => setServerReady(false))
   }, [activeNav, learningFilters, learningQuestions, learningFilterKey, learningSessionCreatedFor, serverReady])
 
   useEffect(() => {
     if (!serverReady) return
-    fetch('/api/learning/stats')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习统计不可用')))
-      .then((payload: { stats: LearningStats }) => { if (payload.stats) setLearningStats(payload.stats) })
+    studyApi.learningStats()
+      .then((payload) => { if (payload.stats) setLearningStats(payload.stats as LearningStats) })
       .catch(() => {})
   }, [activeNav, serverReady])
 
   const refreshLearningStats = () => {
     if (!serverReady) return
-    fetch('/api/learning/stats').then((response) => response.ok ? response.json() : Promise.reject(new Error('学习统计不可用'))).then((payload: { stats: LearningStats }) => { if (payload.stats) setLearningStats(payload.stats) }).catch(() => {})
+    studyApi.learningStats().then((payload) => { if (payload.stats) setLearningStats(payload.stats as LearningStats) }).catch(() => {})
   }
 
   const changeLearningFilters = (patch: Partial<LearningFilters>) => {
@@ -281,7 +280,7 @@ function App() {
 
   const updateMastery = (nextMastery: Mastery) => {
     setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, mastery: nextMastery } : question))
-    if (serverReady && selected) fetch(`/api/questions/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) }).catch(() => setServerReady(false))
+    if (serverReady && selected) questionApi.update(selected.id, { mastery: nextMastery }).catch(() => setServerReady(false))
   }
 
   const openEditor = (question?: Question) => {
@@ -292,26 +291,22 @@ function App() {
   }
 
   const createCategory = async (name: string) => {
-    const response = await fetch('/api/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok || !payload.category) throw new Error(payload.error || '分类创建失败。')
+    const payload = await questionApi.createCategory(name)
+    if (!payload.category) throw new Error('分类创建失败。')
     setCategoryCatalog((current) => [...current, payload.category].sort((a: QuestionCategory, b: QuestionCategory) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN')))
     return payload.category.name as string
   }
 
   const renameCategory = async (categoryToRename: QuestionCategory, name: string) => {
-    const response = await fetch(`/api/categories/${categoryToRename.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok || !payload.category) throw new Error(payload.error || '分类更新失败。')
+    const payload = await questionApi.updateCategory(categoryToRename.id, name)
+    if (!payload.category) throw new Error('分类更新失败。')
     setCategoryCatalog((current) => current.map((item) => item.id === categoryToRename.id ? payload.category : item))
     setQuestions((current) => current.map((question) => question.category.toLocaleLowerCase() === categoryToRename.name.toLocaleLowerCase() ? { ...question, category: payload.category.name } : question))
     setCategory((current) => current === categoryToRename.name ? payload.category.name : current)
   }
 
   const deleteCategory = async (categoryToDelete: QuestionCategory) => {
-    const response = await fetch(`/api/categories/${categoryToDelete.id}`, { method: 'DELETE' })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload.error || '分类删除失败。')
+    await questionApi.deleteCategory(categoryToDelete.id)
     setCategoryCatalog((current) => current.filter((item) => item.id !== categoryToDelete.id))
     setCategory((current) => current === categoryToDelete.name ? '全部分类' : current)
   }
@@ -327,13 +322,13 @@ function App() {
     if (editor.mode === 'edit') {
       setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, ...editor.draft } : question))
       registerCategoryLocally(editor.draft.category)
-      if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editor.draft) }).catch(() => setServerReady(false))
+      if (serverReady) void questionApi.update(selected.id, editor.draft).catch(() => setServerReady(false))
     } else {
       const nextQuestion: Question = { ...editor.draft, id: crypto.randomUUID(), mastery: '未学习' }
       setQuestions((current) => [nextQuestion, ...current])
       registerCategoryLocally(editor.draft.category)
       setSelectedId(nextQuestion.id)
-      if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: [editor.draft] }) }).then(async (response) => { if (!response.ok) throw new Error('题目保存失败'); const payload = await response.json(); if (payload.questions?.[0]) setQuestions((current) => [payload.questions[0], ...current.filter((item) => item.id !== nextQuestion.id)]) }).catch(() => setServerReady(false))
+      if (serverReady) void questionApi.create([editor.draft]).then((payload) => { if (payload.questions?.[0]) setQuestions((current) => [payload.questions[0], ...current.filter((item) => item.id !== nextQuestion.id)]) }).catch(() => setServerReady(false))
     }
     setEditor(null)
   }
@@ -343,7 +338,7 @@ function App() {
     const nextQuestions = questions.filter((question) => question.id !== selected.id)
     setQuestions(nextQuestions)
     setSelectedId(nextQuestions[0]?.id ?? '')
-    if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'DELETE' }).catch(() => setServerReady(false))
+    if (serverReady) void questionApi.remove(selected.id).catch(() => setServerReady(false))
   }
 
   const importPreview = () => {
@@ -370,9 +365,7 @@ function App() {
     }
     setImporter({ ...importer, category: outline.category, processing: true, error: '' })
     try {
-      const response = await fetch('/api/llm/enrich-questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: outline.category, questions: outline.questions, source }), signal: AbortSignal.timeout(240_000) })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || 'AI 生成失败。')
+      const payload = await llmApi.enrichQuestions({ category: outline.category, questions: outline.questions, source }, AbortSignal.timeout(240_000))
       if (!Array.isArray(payload.drafts) || payload.drafts.length !== outline.questions.length) throw new Error('AI 返回的题目数量不完整，请重试。')
       setImporter({ step: 'preview', source, category: outline.category, drafts: payload.drafts, error: '', processing: false })
     } catch (error) {
@@ -396,7 +389,7 @@ function App() {
       return [...current, ...additions]
     })
     setSelectedId(imported[0].id)
-    if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: importer.drafts }) }).then(async (response) => { if (!response.ok) throw new Error('批量保存失败'); const payload = await response.json(); setQuestions((current) => [...(payload.questions || []), ...current.filter((item) => !imported.some((created) => created.id === item.id))]); const counts = new Map<string, number>(); (payload.questions || []).forEach((question: Question) => counts.set(question.category, (counts.get(question.category) || 0) + 1)); setCategoryCatalog((current) => current.map((item) => counts.has(item.name) ? { ...item, questionCount: item.questionCount + (counts.get(item.name) || 0) } : item)) }).catch(() => setServerReady(false))
+    if (serverReady) void questionApi.create(importer.drafts).then((payload) => { setQuestions((current) => [...(payload.questions || []), ...current.filter((item) => !imported.some((created) => created.id === item.id))]); const counts = new Map<string, number>(); (payload.questions || []).forEach((question) => counts.set(question.category, (counts.get(question.category) || 0) + 1)); setCategoryCatalog((current) => current.map((item) => counts.has(item.name) ? { ...item, questionCount: item.questionCount + (counts.get(item.name) || 0) } : item)) }).catch(() => setServerReady(false))
     setImporter(null)
   }
 
@@ -406,9 +399,8 @@ function App() {
     setQuestions((items) => items.map((item) => item.id === current.id ? { ...item, mastery: nextMastery } : item))
     if (serverReady) {
       try {
-        const response = await fetch(`/api/questions/${current.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) })
-        if (!response.ok) throw new Error('题目掌握度更新失败')
-        await fetch('/api/learning-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionId: current.id, sessionId: learningSessionId, mastery: nextMastery }) })
+        await questionApi.update(current.id, { mastery: nextMastery })
+        await studyApi.saveLearningProgress(current.id, nextMastery, learningSessionId)
         refreshLearningStats()
       } catch {
         setServerReady(false)
@@ -424,8 +416,7 @@ function App() {
     const candidates = questions.filter((question) => (filters.category === '全部分类' || question.category === filters.category) && (filters.difficulty === '全部难度' || question.difficulty === filters.difficulty) && (filters.mastery === '全部掌握度' || question.mastery === filters.mastery))
     if (!candidates.length) return
     try {
-      const response = await fetch('/api/practice-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: candidates.map((question) => question.id), filters }) })
-      const payload = await response.json()
+      const payload = await studyApi.createPracticeSession(candidates.map((question) => question.id), filters)
       setPractice({ questionIds: candidates.map((question) => question.id), index: 0, sessionId: payload.session?.id || crypto.randomUUID(), answer: '', submitted: false, scoring: false, score: null, ...filters })
       setVoice({ recording: false, transcribing: false, audioUrl: '', error: '' })
     } catch {
@@ -454,9 +445,7 @@ function App() {
           let binary = ''
           const chunkSize = 0x8000
           for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-          const response = await fetch('/api/stt/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64: btoa(binary), mimeType: blob.type }) })
-          const payload = await response.json()
-          if (!response.ok) throw new Error(payload.error || '语音转写失败。')
+          const payload = await speechApi.transcribe(btoa(binary), blob.type)
           setPractice((current) => current ? { ...current, answer: current.answer ? `${current.answer}\n${payload.text}` : payload.text } : current)
           setVoice({ recording: false, transcribing: false, audioUrl, error: '' })
         } catch (error) {
@@ -484,9 +473,7 @@ function App() {
     if (!interviewSetup.role.trim() && !interviewSetup.jd.trim()) return
     setInterview({ session: {} as InterviewSession, turns: [], answer: '', loading: true, completing: false, report: null, error: '' })
     try {
-      const response = await fetch('/api/interview-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: interviewSetup }) })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || '模拟面试创建失败。')
+      const payload = await interviewApi.create(interviewSetup)
       setInterview({ session: payload.session, turns: [], answer: '', loading: false, completing: false, report: null, error: '' })
     } catch (error) {
       setInterview(null)
@@ -503,18 +490,12 @@ function App() {
     if (!current) return
     setInterview({ ...interview, loading: true })
     try {
-      const response = await fetch(`/api/interview-sessions/${interview.session.id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: current.stage, question: current.question, referenceAnswer: current.referenceAnswer, answerText: interview.answer }) })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || '回答保存失败。')
+      const payload = await interviewApi.saveTurn(interview.session.id, { stage: current.stage, question: current.question, referenceAnswer: current.referenceAnswer, answerText: interview.answer })
       const next = { ...interview.session, currentIndex: Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1), stage: interview.session.blueprint[Math.min(interview.session.currentIndex + 1, interview.session.blueprint.length - 1)]?.stage || current.stage }
       const nextTurns = [...interview.turns, payload.turn]
-      const actionResponse = await fetch(`/api/interview-sessions/${interview.session.id}/next-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerText: interview.answer }) })
-      const actionPayload = await actionResponse.json()
-      if (!actionResponse.ok) throw new Error(actionPayload.error || '下一步面试动作生成失败。')
+      const actionPayload = await interviewApi.nextAction(interview.session.id, interview.answer)
       if (actionPayload.action.action === 'finish') {
-        const reviewResponse = await fetch(`/api/interview-sessions/${interview.session.id}/complete`, { method: 'POST' })
-        const reviewPayload = await reviewResponse.json()
-        if (!reviewResponse.ok) throw new Error(reviewPayload.error || '复盘生成失败。')
+        const reviewPayload = await interviewApi.complete(interview.session.id)
         setInterview({ ...interview, session: reviewPayload.session, turns: nextTurns, answer: '', loading: false, completing: false, report: reviewPayload.report, error: '' })
       } else {
         setInterview({ ...interview, session: actionPayload.session || next, turns: nextTurns, answer: '', loading: false, completing: false, report: null, error: '' })
@@ -529,9 +510,7 @@ function App() {
     if (!interview?.session?.id) return
     setInterview({ ...interview, completing: true, error: '' })
     try {
-      const response = await fetch(`/api/interview-sessions/${interview.session.id}/complete`, { method: 'POST' })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || '复盘生成失败。')
+      const payload = await interviewApi.complete(interview.session.id)
       setInterview({ ...interview, session: payload.session, completing: false, report: payload.report, error: '' })
     } catch (error) {
       setInterview({ ...interview, completing: false, error: error instanceof Error ? error.message : '复盘生成失败。' })
@@ -554,8 +533,7 @@ function App() {
         try {
           const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = ''; const chunkSize = 0x8000
           for (let index = 0; index < bytes.length; index += chunkSize) binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-          const response = await fetch('/api/stt/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64: btoa(binary), mimeType: blob.type }) })
-          const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '语音转写失败。')
+          const payload = await speechApi.transcribe(btoa(binary), blob.type)
           setInterview((current) => current ? { ...current, answer: current.answer ? `${current.answer}\n${payload.text}` : payload.text } : current)
           setInterviewVoice({ recording: false, transcribing: false, audioUrl, error: '' })
         } catch (error) { setInterviewVoice({ recording: false, transcribing: false, audioUrl, error: error instanceof Error ? error.message : '语音转写失败，请改用文字回答。' }) }
@@ -570,10 +548,9 @@ function App() {
     if (!current) return
     setPractice({ ...practice, scoring: true })
     try {
-      const response = await fetch('/api/score-answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: current, answer: practice.answer }) })
-      const payload = await response.json()
+      const payload = await scoringApi.score(current, practice.answer)
       const score = payload.score as ScoreResult
-      await fetch('/api/practice-answers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: practice.sessionId, questionId: current.id, answerText: practice.answer, score }) }).catch(() => {})
+      await studyApi.savePracticeAnswer({ sessionId: practice.sessionId, questionId: current.id, answerText: practice.answer, score }).catch(() => {})
       setPractice({ ...practice, submitted: true, scoring: false, score })
     } catch {
       setPractice({ ...practice, submitted: true, scoring: false, score: { score: 0, strengths: [], gaps: ['评分服务暂时不可用，请稍后重试。'], betterAnswer: '' } })
