@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { llmConfig, llmStatus } from './config/llm'
 import './App.css'
 import type { UserProfile, JobProfile } from './types/profile'
-import type { InterviewSetup as InterviewSetupState } from './types/interview'
+import type { InterviewReport, InterviewSession, InterviewSetup as InterviewSetupState, InterviewTurn, ScoreResult } from './types/interview'
 import { ProfileCenter } from './components/profile/ProfileCenter'
 import { InterviewSetup } from './components/interview/InterviewSetup'
 import { CategoryManagerModal } from './components/questions/CategoryManagerModal'
@@ -42,11 +42,7 @@ type Question = {
 }
 
 type QuestionDraft = Omit<Question, 'id' | 'mastery'>
-type ScoreResult = { score: number; dimensions?: Record<string, number>; strengths: string[]; gaps: string[]; betterAnswer: string; source?: string; fallbackReason?: string }
 type VoiceState = { recording: boolean; transcribing: boolean; audioUrl: string; error: string }
-type InterviewBlueprintItem = { stage: string; kind: string; question: string; focus: string; referenceAnswer: string; followUps: string[] }
-type InterviewReport = { summary: string; strengths: string[]; risks: string[]; suggestions: string[]; nextQuestions: string[] }
-type InterviewSession = { id: string; status: 'active' | 'completed'; stage: string; profile: Record<string, unknown>; blueprint: InterviewBlueprintItem[]; currentIndex: number; report: InterviewReport | null }
 const STORAGE_KEY = 'interview-prep.questions.v1'
 
 const seedQuestions: Question[] = [
@@ -171,7 +167,7 @@ function App() {
   const [learningStats, setLearningStats] = useState<LearningStats | null>(null)
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
-  const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
+  const [interview, setInterview] = useState<{ session: InterviewSession; turns: InterviewTurn[]; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
   const [interviewSetup, setInterviewSetup] = useState<InterviewSetupState>({ role: '', company: '', jd: '', resume: '', jobProfileId: '', resumeId: '', duration: '30 分钟', difficulty: '中等' })
   const [interviewVoice, setInterviewVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null })
