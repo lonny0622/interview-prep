@@ -9,7 +9,7 @@ import { completeChat } from './services/llm/client.js'
 import { handleProfileRoutes } from './routes/profile.routes.js'
 import { handleQuestionRoutes } from './routes/questions.routes.js'
 import { handleInterviewRoutes } from './routes/interview.routes.js'
-import { createLearningSession, createPracticeSession, getLearningStats, saveLearningProgress, savePracticeAnswer } from './db.js'
+import { handleStudyRoutes } from './routes/study.routes.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -428,47 +428,8 @@ async function handle(request, response) {
     }
   }
   if (await handleInterviewRoutes(request, response, { parseStructuredProfile, generateInterviewBlueprint, scoreAnswer, decideNextAction, generateInterviewReport })) return
+  if (await handleStudyRoutes(request, response)) return
   if (await handleQuestionRoutes(request, response)) return
-  if (request.method === 'POST' && request.url === '/api/learning-sessions') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (!Array.isArray(body.questionIds)) return jsonResponse(response, 400, { error: 'questionIds 不能为空数组。' })
-      return jsonResponse(response, 201, { session: createLearningSession(body.questionIds) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '学习 session 创建失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/learning-progress') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (!body.questionId || !['未学习', '了解', '熟悉', '掌握'].includes(body.mastery)) return jsonResponse(response, 400, { error: 'questionId 和合法的 mastery 必填。' })
-      const progress = saveLearningProgress(body.questionId, body.mastery, body.sessionId)
-      return progress ? jsonResponse(response, 201, { progress }) : jsonResponse(response, 404, { error: '题目不存在。' })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '学习记录保存失败。' })
-    }
-  }
-  if (request.method === 'GET' && request.url === '/api/learning/stats') {
-    return jsonResponse(response, 200, { stats: getLearningStats() })
-  }
-  if (request.method === 'POST' && request.url === '/api/practice-sessions') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (!Array.isArray(body.questionIds)) return jsonResponse(response, 400, { error: 'questionIds 不能为空数组。' })
-      return jsonResponse(response, 201, { session: createPracticeSession(body.questionIds, body.filters || {}) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '刷题 session 创建失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/practice-answers') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (!body.sessionId || !body.questionId || typeof body.answerText !== 'string') return jsonResponse(response, 400, { error: 'sessionId、questionId 和 answerText 必填。' })
-      return jsonResponse(response, 201, { answer: savePracticeAnswer(body.sessionId, body.questionId, body.answerText, body.score) })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '回答保存失败。' })
-    }
-  }
   if (request.method === 'POST' && request.url === '/api/resume/extract') {
     try {
       const body = JSON.parse(await readBody(request, 12_000_000))
