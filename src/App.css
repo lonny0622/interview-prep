@@ -80,8 +80,10 @@ body { overflow: hidden; }
 .library-page { display: flex; flex-direction: column; min-height: 100%; }
 .library-page > .library-layout { flex: 1 1 auto; height: auto; min-height: 0; margin-bottom: 24px; }
 @media (min-width: 851px) {
-  .library-page { height: 100%; min-height: 0; overflow: hidden; }
-  .library-page > .library-layout { grid-template-rows: minmax(0, 1fr); }
+  .library-page { height: auto; min-height: 0; overflow: visible; }
+  .library-page > .library-layout { width: calc(100% - 112px); max-width: none; height: calc(100vh - 24px); flex: none; grid-template-rows: minmax(0, 1fr); margin: 0 auto 24px; }
+  .page-header, .stats-row, .toolbar { width: 100%; max-width: none; margin-left: 0; margin-right: 0; }
+  .library-layout { width: calc(100% - 112px); max-width: none; margin-left: 56px; margin-right: 56px; }
 }
 @media (max-width: 850px) {
   .library-page { min-height: auto; }
