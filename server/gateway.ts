@@ -10,6 +10,8 @@ import { handleProfileRoutes } from './routes/profile.routes.js'
 import { handleQuestionRoutes } from './routes/questions.routes.js'
 import { handleInterviewRoutes } from './routes/interview.routes.js'
 import { handleStudyRoutes } from './routes/study.routes.js'
+import { handleLlmRoutes } from './routes/llm.routes.js'
+import { handleMediaRoutes } from './routes/media.routes.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
@@ -401,19 +403,8 @@ async function handle(request, response) {
     response.end()
     return
   }
-  if (request.method === 'GET' && request.url === '/api/llm/health') {
-    if (!baseUrl || !model || !apiKey) return jsonResponse(response, 503, { ok: false, configured: false, provider, model })
-    try {
-      const upstream = await fetch(`${baseUrl}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
-      const payload = await upstream.json().catch(() => ({}))
-      return jsonResponse(response, upstream.ok ? 200 : 502, { ok: upstream.ok, configured: true, provider, model, modelCount: Array.isArray(payload.data) ? payload.data.length : 0, error: payload.error?.message })
-    } catch (error) {
-      return jsonResponse(response, 502, { ok: false, configured: true, provider, model, error: error.message })
-    }
-  }
-  if (request.method === 'GET' && request.url === '/api/speech/health') {
-    return jsonResponse(response, 200, { configured: Boolean(sttBaseUrl && sttModel && sttApiKey), provider: sttProvider || 'openai-compatible', model: sttModel || '' })
-  }
+  if (await handleLlmRoutes(request, response, { baseUrl, model, importModel, apiKey, provider }, { callModel, normalizeQuestionOutline, enrichQuestionBatch, scoreAnswer, fallbackScore })) return
+  if (await handleMediaRoutes(request, response, { sttBaseUrl, sttModel, sttApiKey, sttProvider }, { extractResumeText, transcribeAudio })) return
   if (await handleProfileRoutes(request, response)) return
   if (request.method === 'POST' && request.url === '/api/profile/parse') {
     try {
@@ -430,65 +421,6 @@ async function handle(request, response) {
   if (await handleInterviewRoutes(request, response, { parseStructuredProfile, generateInterviewBlueprint, scoreAnswer, decideNextAction, generateInterviewReport })) return
   if (await handleStudyRoutes(request, response)) return
   if (await handleQuestionRoutes(request, response)) return
-  if (request.method === 'POST' && request.url === '/api/resume/extract') {
-    try {
-      const body = JSON.parse(await readBody(request, 12_000_000))
-      if (typeof body.fileBase64 !== 'string' || !body.fileBase64.trim()) return jsonResponse(response, 400, { error: 'fileBase64 不能为空。' })
-      const text = await extractResumeText(Buffer.from(body.fileBase64, 'base64'), String(body.fileName || ''), String(body.mimeType || ''))
-      if (!text) return jsonResponse(response, 422, { error: '文档中没有提取到文本，请改用粘贴文本。' })
-      return jsonResponse(response, 200, { text: text.slice(0, 80_000), fileName: body.fileName })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '简历解析失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/score-answer') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (!body.question || typeof body.answer !== 'string' || !body.answer.trim()) return jsonResponse(response, 400, { error: 'question 和 answer 必填。' })
-      let score
-      try {
-        score = await scoreAnswer(body.question, body.answer)
-        score.source = 'llm'
-      } catch (error) {
-        score = { ...fallbackScore(body.question, body.answer), fallbackReason: error.message }
-      }
-      return jsonResponse(response, 200, { score, model })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '评分失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/stt/transcribe') {
-    try {
-      const body = JSON.parse(await readBody(request, 15_000_000))
-      if (typeof body.audioBase64 !== 'string' || !body.audioBase64.trim()) return jsonResponse(response, 400, { error: 'audioBase64 不能为空。' })
-      const text = await transcribeAudio(body.audioBase64, body.mimeType)
-      return jsonResponse(response, 200, { text, model: sttModel })
-    } catch (error) {
-      return jsonResponse(response, 502, { error: error.message || '语音转写失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/llm/parse-questions') {
-    try {
-      const body = JSON.parse(await readBody(request))
-      if (typeof body.source !== 'string' || !body.source.trim()) return jsonResponse(response, 400, { error: 'source 不能为空。' })
-      const drafts = await callModel(body.source)
-      return jsonResponse(response, 200, { drafts, model: importModel })
-    } catch (error) {
-      return jsonResponse(response, 502, { error: error.message || 'LLM 解析失败。' })
-    }
-  }
-  if (request.method === 'POST' && request.url === '/api/llm/enrich-questions') {
-    try {
-      const body = JSON.parse(await readBody(request, 2_000_000))
-      const category = String(body.category || '未分类').trim() || '未分类'
-      const outlines = normalizeQuestionOutline(body.questions, category)
-      if (!outlines.length) return jsonResponse(response, 400, { error: '没有可生成的题目。' })
-      const drafts = await enrichQuestionBatch(outlines, category)
-      return jsonResponse(response, 200, { drafts, category, count: drafts.length, model: importModel })
-    } catch (error) {
-      return jsonResponse(response, 502, { error: error.message || '题目内容生成失败。' })
-    }
-  }
   jsonResponse(response, 404, { error: 'Not Found' })
 }
 
