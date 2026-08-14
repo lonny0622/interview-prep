@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, ChevronUp, CircleDot, FilePenLine, FileUp, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, BrainCircuit, ChevronDown, ChevronUp, CircleDot, FilePenLine, ListFilter, Mic2, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { llmConfig, llmStatus } from './config/llm'
@@ -8,6 +8,9 @@ import type { UserProfile, JobProfile } from './types/profile'
 import type { InterviewSetup as InterviewSetupState } from './types/interview'
 import { ProfileCenter } from './components/profile/ProfileCenter'
 import { InterviewSetup } from './components/interview/InterviewSetup'
+import { QuestionImportModal } from './components/questions/QuestionImportModal'
+import type { QuestionImporterState } from './components/questions/QuestionImportModal'
+import { parseQuestionOutline } from './features/questionImport'
 import { profileApi } from './api/profileApi'
 
 type Difficulty = '简单' | '中等' | '困难'
@@ -84,8 +87,8 @@ const emptyDraft: QuestionDraft = { title: '', category: '', difficulty: '中等
 
 const masteryOrder: Mastery[] = ['未学习', '了解', '熟悉', '掌握']
 
-function parseImportedQuestions(source: string): QuestionDraft[] {
-  const trimmed = source.trim()
+function parseImportedQuestions(source = ''): QuestionDraft[] {
+  const trimmed = String(source || '').trim()
   if (!trimmed) return []
   try {
     const parsed = JSON.parse(trimmed)
@@ -140,7 +143,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(seedQuestions[0].id)
   const [showAnswer, setShowAnswer] = useState(false)
   const [editor, setEditor] = useState<{ mode: 'create' | 'edit'; draft: QuestionDraft } | null>(null)
-  const [importer, setImporter] = useState<{ step: 'input' | 'preview'; source: string; drafts: QuestionDraft[]; error: string; processing: boolean } | null>(null)
+  const [importer, setImporter] = useState<QuestionImporterState | null>(null)
   const [learningIndex, setLearningIndex] = useState(0)
   const [learningReveal, setLearningReveal] = useState(false)
   const [serverReady, setServerReady] = useState(false)
@@ -243,31 +246,46 @@ function App() {
 
   const importPreview = () => {
     if (!importer) return
+    const source = String(importer.source || '')
     try {
-      const drafts = parseImportedQuestions(importer.source)
+      const drafts = parseImportedQuestions(source)
       if (!drafts.length) throw new Error('没有解析到有效题目，请检查格式。')
-      setImporter({ ...importer, step: 'preview', drafts, error: '' })
+      setImporter({ ...importer, source, step: 'preview', category: String(drafts[0]?.category || importer.category || '未分类'), drafts, error: '' })
     } catch (error) {
       setImporter({ ...importer, error: error instanceof Error ? error.message : '导入内容无法解析。' })
     }
   }
 
   const importWithAi = async () => {
-    if (!importer?.source.trim()) return
-    setImporter({ ...importer, processing: true, error: '' })
+    if (!importer) return
+    const source = String(importer.source || '')
+    const category = String(importer.category || '')
+    if (!source.trim()) return
+    const outline = parseQuestionOutline(source, category)
+    if (!outline.questions.length) {
+      setImporter({ ...importer, error: '没有识别到题目。请每行写一道题，并用 ⭐ Level 1/2/3 标记难度。' })
+      return
+    }
+    setImporter({ ...importer, category: outline.category, processing: true, error: '' })
     try {
-      const response = await fetch('/api/llm/parse-questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: importer.source }), signal: AbortSignal.timeout(95_000) })
+      const response = await fetch('/api/llm/enrich-questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: outline.category, questions: outline.questions, source }), signal: AbortSignal.timeout(240_000) })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.error || 'AI 解析失败。')
-      if (!Array.isArray(payload.drafts) || payload.drafts.length === 0) throw new Error('AI 没有返回有效题目。')
-      setImporter({ step: 'preview', source: importer.source, drafts: payload.drafts, error: '', processing: false })
+      if (!response.ok) throw new Error(payload.error || 'AI 生成失败。')
+      if (!Array.isArray(payload.drafts) || payload.drafts.length !== outline.questions.length) throw new Error('AI 返回的题目数量不完整，请重试。')
+      setImporter({ step: 'preview', source, category: outline.category, drafts: payload.drafts, error: '', processing: false })
     } catch (error) {
-      setImporter({ ...importer, processing: false, error: error instanceof Error ? error.message : 'AI 解析失败。' })
+      const message = error instanceof Error ? error.message : 'AI 解析失败。'
+      setImporter({ ...importer, processing: false, error: /JSON|Unexpected token|格式/.test(message) ? '模型返回格式不完整，系统已自动重试；仍失败时请再次点击生成。' : message })
     }
   }
 
   const confirmImport = () => {
     if (!importer?.drafts.length) return
+    const incomplete = importer.drafts.filter((draft) => !String(draft.title || '').trim() || !String(draft.answer || '').trim() || !String(draft.explanation || '').trim() || !String(draft.interviewAnswer || '').trim())
+    if (incomplete.length) {
+      setImporter({ ...importer, error: `还有 ${incomplete.length} 道题目的答案、解析或建议回答为空，请补充后再导入。` })
+      return
+    }
     const imported = importer.drafts.map((draft) => ({ ...draft, id: crypto.randomUUID(), mastery: '未学习' as Mastery }))
     setQuestions((current) => [...imported, ...current])
     setSelectedId(imported[0].id)
@@ -486,7 +504,7 @@ function App() {
         <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>{['全部难度', '简单', '中等', '困难'].map((item) => <option key={item}>{item}</option>)}</select>
         <select value={mastery} onChange={(event) => setMastery(event.target.value)}>{['全部掌握度', '未学习', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select>
-        <button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', drafts: [], error: '', processing: false })}><Upload size={13} />批量导入</button>
+        <button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}><Upload size={13} />批量导入</button>
       </div>
       <div className="library-layout">
         <section className="question-list" aria-label="面试题列表">
@@ -546,7 +564,7 @@ function App() {
         <div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setEditor(null)}>取消</button><button className="primary-button" type="button" disabled={!editor.draft.title.trim() || !editor.draft.category.trim()} onClick={saveQuestion}>保存题目</button></div>
       </section>
     </div>}
-    {importer && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setImporter(null) }}><section className="editor-modal import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="modal-header"><div><p className="eyebrow">Question import</p><h2 id="import-title">{importer.step === 'input' ? '批量导入题目' : '确认导入内容'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setImporter(null)}><X size={18} /></button></div>{importer.step === 'input' ? <><div className="import-hint"><FileUp size={20} /><div><strong>粘贴 JSON 或 Markdown</strong><p>支持题目数组 JSON，或用二级标题分隔的 Markdown 题目块。解析后会先预览，不会直接修改题库。</p></div></div><textarea className="import-textarea" value={importer.source} onChange={(event) => setImporter({ ...importer, source: event.target.value, error: '' })} placeholder={'示例：\n[{"title":"什么是闭包？","category":"JavaScript","difficulty":"中等","answer":"..."}]'} />{importer.error && <p className="form-error">{importer.error}</p>}<div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setImporter(null)}>取消</button><button className="quiet-button" type="button" disabled={importer.processing || !importer.source.trim()} onClick={importPreview}>本地解析</button><button className="primary-button" type="button" disabled={importer.processing || !importer.source.trim()} onClick={importWithAi}>{importer.processing ? 'AI 解析中…' : 'AI 解析'} <Sparkles size={13} /></button></div></> : <><div className="import-summary"><Check size={16} /> 已解析 {importer.drafts.length} 道题目，确认后加入题库</div><div className="import-preview-list">{importer.drafts.map((draft, index) => <div key={`${draft.title}-${index}`}><strong>{draft.title}</strong><span>{draft.category} · {draft.difficulty} · 重要性 {draft.importance}/5</span></div>)}</div><div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setImporter({ ...importer, step: 'input' })}><ArrowLeft size={13} />返回修改</button><button className="primary-button" type="button" onClick={confirmImport}>确认导入 <Check size={13} /></button></div></>}</section></div>}
+    {importer && <QuestionImportModal state={importer} onChange={(next) => setImporter(next)} onClose={() => setImporter(null)} onLocalParse={importPreview} onGenerate={() => void importWithAi()} onConfirm={confirmImport} />}
   </div>
 }
 

@@ -35,6 +35,7 @@ const port = Number(env('LLM_GATEWAY_PORT', '8787'))
 const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
 
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
+const enrichedQuestionSchema = '[{"title":"必须原样保留的问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"Markdown 格式的正确答案","explanation":"Markdown 格式的详细解析，必须包含 ## 核心结论、## 详细解析、## 速记 三个小节","interviewAnswer":"不超过 120 字、适合面试现场直接说的回答","followUps":["发散问题 1","发散问题 2"]}]'
 const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"clarity":0,"relevance":0},"strengths":["优点"],"gaps":["缺口"],"betterAnswer":"更好的回答"}'
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
@@ -132,11 +133,22 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
 }
 
 function extractJson(content) {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim()
-  const candidate = fenced || content.trim()
-  const first = candidate.indexOf('[')
-  const last = candidate.lastIndexOf(']')
-  return JSON.parse(first >= 0 && last > first ? candidate.slice(first, last + 1) : candidate)
+  if (typeof content !== 'string' || !content.trim()) throw new Error('模型没有返回 JSON 内容。')
+  const candidates = [content.trim(), ...Array.from(content.matchAll(/```(?:json|javascript|typescript|js|ts)?\s*([\s\S]*?)```/gi), (match) => match[1].trim())]
+  let lastError
+  for (const candidate of candidates) {
+    for (let start = candidate.indexOf('['); start >= 0; start = candidate.indexOf('[', start + 1)) {
+      for (let end = candidate.lastIndexOf(']'); end > start; end = candidate.lastIndexOf(']', end - 1)) {
+        try {
+          const value = JSON.parse(candidate.slice(start, end + 1))
+          if (Array.isArray(value)) return value
+        } catch (error) {
+          lastError = error
+        }
+      }
+    }
+  }
+  throw new Error(`模型返回的题目不是有效 JSON。${lastError?.message || ''}`)
 }
 
 function extractObject(content) {
@@ -292,6 +304,15 @@ function normalizeDrafts(value) {
   })).filter((item) => item.title)
 }
 
+function normalizeQuestionOutline(value, category) {
+  if (!Array.isArray(value) || !value.length) throw new Error('questions 必须是非空数组。')
+  return value.map((item) => ({
+    title: String(item.title || item.question || '').trim(),
+    difficulty: ['简单', '中等', '困难'].includes(item.difficulty) ? item.difficulty : '中等',
+    category: String(category || item.category || '未分类').trim() || '未分类',
+  })).filter((item) => item.title).slice(0, 50)
+}
+
 async function callModel(source) {
   if (!baseUrl || !model || !apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
   const controller = new AbortController()
@@ -323,6 +344,77 @@ async function callModel(source) {
   const content = payload.choices?.[0]?.message?.content
   if (typeof content !== 'string') throw new Error('上游模型没有返回文本内容。')
   return normalizeDrafts(extractJson(content))
+}
+
+async function callEnrichmentModel(outlines, category) {
+  if (!baseUrl || !importModel || !apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
+  let response
+  try {
+    response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: importModel,
+        temperature: 0.15,
+        max_tokens: Math.min(8_000, Math.max(2_000, outlines.length * 1_150)),
+        messages: [
+          { role: 'system', content: `你是一名资深 React Native 面试教练和题库编辑。只输出 JSON 数组，不要代码围栏。字段结构：${enrichedQuestionSchema}。技术背景以当前主流 React Native + TypeScript 为准，覆盖 React Native 0.7x/0.8x、Hermes、新架构 Fabric/TurboModules/JSI 等能力时必须说明版本或适用边界，不能把已经废弃的方案当成唯一正确答案。答案必须准确，解析要让初学者能理解，并解释为什么；解析必须使用 Markdown 且严格包含“## 核心结论”“## 详细解析”“## 速记”三个小节。建议回答要短、自然、可直接在面试中复述，抓住定义、原理和一个关键取舍。每道题生成 2-4 个发散问题。严格按照输入题目顺序返回，title 必须原样保留，不得漏题、合并题目或虚构与题目无关的内容。` },
+          { role: 'user', content: JSON.stringify({ category, questions: outlines }) },
+        ],
+      }),
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`模型请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload.error?.message || `上游模型请求失败（${response.status}）。`)
+  const content = payload.choices?.[0]?.message?.content
+  if (typeof content !== 'string') throw new Error('上游模型没有返回文本内容。')
+  const value = extractJson(content)
+  if (!Array.isArray(value) || value.length !== outlines.length) throw new Error(`模型返回 ${Array.isArray(value) ? value.length : 0} 道题，预期 ${outlines.length} 道。`)
+  return outlines.map((outline, index) => {
+    const item = value[index] || {}
+    const answer = String(item.answer ?? item.answer_md ?? '').trim()
+    const explanation = String(item.explanation ?? item.explanation_md ?? '').trim()
+    const interviewAnswer = String(item.interviewAnswer ?? item.interview_answer ?? '').trim()
+    if (!answer || !explanation || !interviewAnswer) throw new Error(`题目“${outline.title}”生成内容不完整。`)
+    if (!/速记/.test(explanation)) throw new Error(`题目“${outline.title}”的解析缺少速记小节。`)
+    return {
+      title: outline.title,
+      category,
+      difficulty: outline.difficulty,
+      importance: Math.min(5, Math.max(1, Number(item.importance) || 3)),
+      answer,
+      explanation,
+      interviewAnswer,
+      followUps: Array.isArray(item.followUps ?? item.follow_up_questions) ? (item.followUps ?? item.follow_up_questions).map(String).filter(Boolean).slice(0, 4) : [],
+    }
+  })
+}
+
+async function enrichQuestionBatch(outlines, category) {
+  const chunks = []
+  for (let index = 0; index < outlines.length; index += 6) chunks.push(outlines.slice(index, index + 6))
+  const results = await Promise.all(chunks.map(async (chunk) => {
+    let lastError
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await callEnrichmentModel(chunk, category)
+      } catch (error) {
+        lastError = error
+        if (attempt === 0 && !/配置不完整|请求超过/.test(error.message || '')) await new Promise((resolveRetry) => setTimeout(resolveRetry, 250))
+        else break
+      }
+    }
+    throw lastError
+  }))
+  return results.flat()
 }
 
 async function scoreAnswer(question, answer) {
@@ -589,6 +681,18 @@ async function handle(request, response) {
       return jsonResponse(response, 200, { drafts, model: importModel })
     } catch (error) {
       return jsonResponse(response, 502, { error: error.message || 'LLM 解析失败。' })
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/llm/enrich-questions') {
+    try {
+      const body = JSON.parse(await readBody(request, 2_000_000))
+      const category = String(body.category || '未分类').trim() || '未分类'
+      const outlines = normalizeQuestionOutline(body.questions, category)
+      if (!outlines.length) return jsonResponse(response, 400, { error: '没有可生成的题目。' })
+      const drafts = await enrichQuestionBatch(outlines, category)
+      return jsonResponse(response, 200, { drafts, category, count: drafts.length, model: importModel })
+    } catch (error) {
+      return jsonResponse(response, 502, { error: error.message || '题目内容生成失败。' })
     }
   }
   jsonResponse(response, 404, { error: 'Not Found' })
