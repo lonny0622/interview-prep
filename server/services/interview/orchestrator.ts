@@ -1,4 +1,5 @@
 import { errorMessage } from '../../http/errors.js'
+import type { InterviewBlueprintItem, InterviewNextAction, InterviewProfile, InterviewReport, InterviewSession, InterviewStage, InterviewTurn } from '../../domain/interview.js'
 import { completeChat } from '../llm/client.js'
 import { extractJsonArray, extractJsonObject } from '../llm/json.js'
 
@@ -13,21 +14,29 @@ export type InterviewOrchestratorConfig = {
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
 
-function normalizeBlueprint(value: any) {
+const asRecord = (value: unknown): Record<string, unknown> => typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+const stringList = (value: unknown, limit = 20): string[] => Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, limit) : []
+const allowedStages: InterviewStage[] = ['self_introduction', 'project_experience', 'knowledge', 'scenario', 'follow_up', 'candidate_questions']
+const isInterviewStage = (value: unknown): value is InterviewStage => allowedStages.includes(value as InterviewStage)
+
+function normalizeBlueprint(value: unknown): InterviewBlueprintItem[] {
   if (!Array.isArray(value)) throw new Error('模型返回的问题蓝图不是数组。')
-  const allowed = ['self_introduction', 'project_experience', 'knowledge', 'scenario', 'follow_up', 'candidate_questions']
-  return value.map((item: any) => ({
-    stage: allowed.includes(item.stage) ? item.stage : 'knowledge',
-    kind: String(item.kind || '八股题').trim(),
-    question: String(item.question || item.title || '').trim(),
-    focus: String(item.focus || '').trim(),
-    referenceAnswer: String(item.referenceAnswer || item.reference_answer || item.expectedPoints || '').trim(),
-    followUps: Array.isArray(item.followUps) ? item.followUps.map(String).filter(Boolean).slice(0, 3) : [],
-  })).filter((item) => item.question).slice(0, 18)
+  return value.map((entry) => {
+    const item = asRecord(entry)
+    return {
+      stage: isInterviewStage(item.stage) ? item.stage : 'knowledge',
+      kind: String(item.kind || '八股题').trim(),
+      question: String(item.question || item.title || '').trim(),
+      focus: String(item.focus || '').trim(),
+      referenceAnswer: String(item.referenceAnswer || item.reference_answer || item.expectedPoints || '').trim(),
+      followUps: stringList(item.followUps, 3),
+    }
+  }).filter((item) => item.question).slice(0, 18)
 }
 
-function fallbackBlueprint(profile: any) {
-  const project = profile.projects?.[0]?.name || profile.candidateProfile?.candidate?.projects?.[0]?.name || '你简历中的核心项目'
+function fallbackBlueprint(profile: InterviewProfile): InterviewBlueprintItem[] {
+  const looseProjects = Array.isArray(profile.projects) ? profile.projects : []
+  const project = String(asRecord(looseProjects[0]).name || profile.candidateProfile?.candidate.projects[0]?.name || '你简历中的核心项目')
   return [
     { stage: 'self_introduction', kind: '自我介绍', question: '请做一个 1-2 分钟的自我介绍，重点讲和这个岗位最相关的经历。', focus: '表达结构、岗位匹配度', referenceAnswer: '应包含个人定位、最相关经历、核心能力和与岗位的匹配关系。', followUps: ['为什么考虑这个岗位？'] },
     { stage: 'project_experience', kind: '简历项目题', question: `请介绍一下你在「${project}」项目中的职责、技术选型和最终结果。`, focus: '项目真实性、个人贡献、结果', referenceAnswer: '应说明项目背景、个人职责、关键技术取舍、遇到的难点和可量化结果。', followUps: ['当时最大的技术取舍是什么？'] },
@@ -39,7 +48,7 @@ function fallbackBlueprint(profile: any) {
 }
 
 /** 根据画像生成面试蓝图；模型异常时返回覆盖完整流程的固定蓝图。 */
-export async function generateInterviewBlueprint(profile: any, config: InterviewOrchestratorConfig): Promise<any[]> {
+export async function generateInterviewBlueprint(profile: InterviewProfile, config: InterviewOrchestratorConfig): Promise<InterviewBlueprintItem[]> {
   if (!config.baseUrl || !config.model || !config.apiKey) return fallbackBlueprint(profile)
   const source = JSON.stringify(profile).slice(0, 30_000)
   try {
@@ -60,8 +69,8 @@ export async function generateInterviewBlueprint(profile: any, config: Interview
 }
 
 /** 依据已保存的回答生成复盘报告，并在模型不可用时提供可操作建议。 */
-export async function generateInterviewReport(session: any, turns: any[], config: InterviewOrchestratorConfig): Promise<any> {
-  const fallback = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item: any) => item.question) }
+export async function generateInterviewReport(session: InterviewSession, turns: InterviewTurn[], config: InterviewOrchestratorConfig): Promise<InterviewReport> {
+  const fallback: InterviewReport = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item) => item.question) }
   if (!config.baseUrl || !config.model || !config.apiKey) return fallback
   try {
     const content = await completeChat({
@@ -73,14 +82,15 @@ export async function generateInterviewReport(session: any, turns: any[], config
         { role: 'user', content: JSON.stringify({ profile: session.profile, turns }).slice(0, 40_000) },
       ],
     }, config)
-    return { ...fallback, ...extractJsonObject(content, '模型返回的复盘结果不是有效 JSON。') }
+    const value = asRecord(extractJsonObject(content, '模型返回的复盘结果不是有效 JSON。'))
+    return { summary: String(value.summary || fallback.summary), strengths: stringList(value.strengths) || fallback.strengths, risks: stringList(value.risks) || fallback.risks, suggestions: stringList(value.suggestions) || fallback.suggestions, nextQuestions: stringList(value.nextQuestions) || fallback.nextQuestions }
   } catch (error) {
     console.warn(`Interview report fallback: ${errorMessage(error)}`)
     return fallback
   }
 }
 
-function fallbackNextAction(session: any, answer: string) {
+function fallbackNextAction(session: InterviewSession, answer: string): InterviewNextAction {
   const current = session.blueprint[session.currentIndex]
   const normalized = answer.trim()
   const hasWeakSignal = normalized.length < 45 || !/[0-9%]|结果|指标|影响|负责/.test(normalized)
@@ -91,7 +101,7 @@ function fallbackNextAction(session: any, answer: string) {
 }
 
 /** 根据回答决定追问、进入下一阶段或结束，并校验模型动作的有限集合。 */
-export async function decideNextAction(session: any, answer: string, config: InterviewOrchestratorConfig): Promise<any> {
+export async function decideNextAction(session: InterviewSession, answer: string, config: InterviewOrchestratorConfig): Promise<InterviewNextAction> {
   const fallback = fallbackNextAction(session, answer)
   if (!config.baseUrl || !config.model || !config.apiKey) return fallback
   try {
@@ -105,11 +115,11 @@ export async function decideNextAction(session: any, answer: string, config: Int
         { role: 'user', content: JSON.stringify({ current, answer, currentIndex: session.currentIndex, total: session.blueprint.length }) },
       ],
     }, config)
-    const value = extractJsonObject<any>(content, '模型返回的下一步动作不是有效 JSON。')
-    if (!['follow_up', 'advance_stage', 'finish'].includes(value.action)) throw new Error('Agent action 不合法。')
+    const value = asRecord(extractJsonObject(content, '模型返回的下一步动作不是有效 JSON。'))
+    if (value.action !== 'follow_up' && value.action !== 'advance_stage' && value.action !== 'finish') throw new Error('Agent action 不合法。')
     if (value.action === 'follow_up' && !String(value.question || '').trim()) throw new Error('Agent 追问为空。')
-    if (value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1) value.action = 'finish'
-    return { ...fallback, ...value, question: String(value.question || '').trim(), referenceAnswer: String(value.referenceAnswer || '').trim() }
+    const action = value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1 ? 'finish' : value.action
+    return { action, reason: String(value.reason || fallback.reason), question: String(value.question || '').trim(), kind: String(value.kind || fallback.kind), focus: String(value.focus || fallback.focus), referenceAnswer: String(value.referenceAnswer || '').trim() }
   } catch (error) {
     console.warn(`Interview next action fallback: ${errorMessage(error)}`)
     return fallback

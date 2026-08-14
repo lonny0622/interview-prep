@@ -5,16 +5,19 @@ import { errorMessage } from '../http/errors.js'
 import { matchesRoute, pathSegment } from '../http/routing.js'
 import type { ScoreQuestion, ScoreResult } from '../domain/question.js'
 import type { StructuredProfile } from '../domain/profile.js'
+import type { InterviewBlueprintItem, InterviewNextAction, InterviewProfile, InterviewReport, InterviewSession, InterviewTurn, SaveInterviewTurnInput } from '../domain/interview.js'
 import { createInterviewSession, completeInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from '../db/repositories/interview.repository.js'
 import { listJobProfiles } from '../db/repositories/profile.repository.js'
 
 type InterviewServices = {
   parseStructuredProfile: (resumeText: string, jdText: string, existing: Record<string, unknown>) => Promise<StructuredProfile>
-  generateInterviewBlueprint: (profile: any) => Promise<any[]>
+  generateInterviewBlueprint: (profile: InterviewProfile) => Promise<InterviewBlueprintItem[]>
   scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
-  decideNextAction: (session: any, answer: string) => Promise<any>
-  generateInterviewReport: (session: any, turns: any[]) => Promise<any>
+  decideNextAction: (session: InterviewSession, answer: string) => Promise<InterviewNextAction>
+  generateInterviewReport: (session: InterviewSession, turns: InterviewTurn[]) => Promise<InterviewReport>
 }
+
+type SaveTurnBody = Partial<SaveInterviewTurnInput> & { referenceAnswer?: string }
 
 const sessionId = (request: IncomingMessage) => pathSegment(request, 3)
 
@@ -22,7 +25,7 @@ const sessionId = (request: IncomingMessage) => pathSegment(request, 3)
 export async function handleInterviewRoutes(request: IncomingMessage, response: ServerResponse, services: InterviewServices): Promise<boolean> {
   if (matchesRoute(request, 'POST', '/api/interview-sessions')) {
     try {
-      const body = await readJson<{ profile?: any }>(request, 2_000_000)
+      const body = await readJson<{ profile?: InterviewProfile }>(request, 2_000_000)
       if (!body.profile || typeof body.profile !== 'object') { jsonResponse(response, 400, { error: 'profile 必须是对象。' }); return true }
       const rawProfile = body.profile
       if (rawProfile.jobProfileId || rawProfile.resumeId) {
@@ -52,7 +55,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
   if (matchesRoute(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/turns$/)) {
     try {
       const id = sessionId(request)
-      const body = await readJson<any>(request, 2_000_000)
+      const body = await readJson<SaveTurnBody>(request, 2_000_000)
       if (!body.question || typeof body.answerText !== 'string' || !body.answerText.trim()) { jsonResponse(response, 400, { error: 'question 和 answerText 必填。' }); return true }
       let score = null
       try { score = await services.scoreAnswer({ title: body.question, answer: body.referenceAnswer || '', interviewAnswer: body.referenceAnswer || '' }, body.answerText) } catch { score = null }

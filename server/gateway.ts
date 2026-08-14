@@ -16,14 +16,15 @@ import { decideNextAction as decideNextActionService, generateInterviewBlueprint
 import { enrichQuestionBatch as enrichQuestionBatchService, normalizeQuestionOutline, parseQuestionSource } from './services/llm/questions.js'
 import { fallbackScore, scoreAnswer as scoreAnswerService } from './services/llm/scoring.js'
 import type { QuestionOutline, ScoreQuestion } from './domain/question.js'
+import type { InterviewProfile, InterviewSession, InterviewTurn } from './domain/interview.js'
 
 const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
 const llmConfig = { baseUrl, model, importModel, apiKey, requestTimeoutMs }
 const parseStructuredProfile = (resumeText: string, jdText: string, existing: Record<string, unknown>) => parseStructuredProfileService(resumeText, jdText, existing, llmConfig)
-const generateInterviewBlueprint = (profile: any) => generateInterviewBlueprintService(profile, llmConfig)
-const decideNextAction = (session: any, answer: string) => decideNextActionService(session, answer, llmConfig)
-const generateInterviewReport = (session: any, turns: any[]) => generateInterviewReportService(session, turns, llmConfig)
+const generateInterviewBlueprint = (profile: InterviewProfile) => generateInterviewBlueprintService(profile, llmConfig)
+const decideNextAction = (session: InterviewSession, answer: string) => decideNextActionService(session, answer, llmConfig)
+const generateInterviewReport = (session: InterviewSession, turns: InterviewTurn[]) => generateInterviewReportService(session, turns, llmConfig)
 const callModel = (source: string) => parseQuestionSource(source, importModel)
 const enrichQuestionBatch = (outlines: QuestionOutline[], category: string) => enrichQuestionBatchService(outlines, category, importModel)
 const scoreAnswer = (question: ScoreQuestion, answer: string) => scoreAnswerService(question, answer, model)
