@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,13 +25,13 @@ const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experienc
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
 const profileSchema = '{"candidate":{"name":"","headline":"","yearsExperience":0,"skills":[""],"experiences":[{"company":"","title":"","period":"","responsibilities":[""]}],"projects":[{"name":"","background":"","responsibilities":[""],"techStack":[""],"challenges":[""],"solutions":[""],"results":[""],"risks":[""]}]},"job":{"role":"","responsibilities":[""],"requiredSkills":[""],"preferredExperience":[""],"interviewSignals":[""]},"gaps":[""]}'
 
-function extractDocxText(binary) {
+function extractDocxText(binary: Buffer): Promise<string> {
   const tempDir = mkdtempSync(join(rootDir, '.resume-'))
   const inputPath = join(tempDir, 'resume.docx')
   writeFileSync(inputPath, binary)
   const unzip = spawn('unzip', ['-p', inputPath, 'word/document.xml'])
   return new Promise((resolveText, rejectText) => {
-      const output = []; const errors = []
+      const output: Buffer[] = []; const errors: Buffer[] = []
       unzip.stdout.on('data', (chunk) => output.push(chunk)); unzip.stderr.on('data', (chunk) => errors.push(chunk))
       unzip.on('error', rejectText)
       unzip.on('close', (code) => {
@@ -42,13 +43,13 @@ function extractDocxText(binary) {
   })
 }
 
-function extractPdfText(binary) {
+function extractPdfText(binary: Buffer): Promise<string> {
   const tempDir = mkdtempSync(join(rootDir, '.resume-'))
   const inputPath = join(tempDir, 'resume.pdf')
   writeFileSync(inputPath, binary)
   return new Promise((resolveText, rejectText) => {
     const process = spawn('textutil', ['-convert', 'txt', '-stdout', inputPath])
-    const output = []; const errors = []
+    const output: Buffer[] = []; const errors: Buffer[] = []
     process.stdout.on('data', (chunk) => output.push(chunk)); process.stderr.on('data', (chunk) => errors.push(chunk))
     process.on('close', (code) => {
       rmSync(tempDir, { recursive: true, force: true })
@@ -58,7 +59,7 @@ function extractPdfText(binary) {
   })
 }
 
-async function extractResumeText(binary, fileName, mimeType): Promise<string> {
+async function extractResumeText(binary: Buffer, fileName: string, mimeType: string): Promise<string> {
   const lower = fileName.toLowerCase()
   if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return String(await extractDocxText(binary))
   if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return String(await extractPdfText(binary))
@@ -66,12 +67,12 @@ async function extractResumeText(binary, fileName, mimeType): Promise<string> {
   throw new Error('仅支持 .docx 和 .pdf 简历文件。')
 }
 
-function convertToWav(binary, mimeType) {
+function convertToWav(binary: Buffer, mimeType: string): Promise<Buffer> {
   if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav' || mimeType === 'audio/wave') return Promise.resolve(binary)
   return new Promise((resolveConversion, rejectConversion) => {
     const process = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'])
-    const output = []
-    const errors = []
+    const output: Buffer[] = []
+    const errors: Buffer[] = []
     process.stdout.on('data', (chunk) => output.push(chunk))
     process.stderr.on('data', (chunk) => errors.push(chunk))
     process.on('error', (error) => rejectConversion(new Error(`音频格式转换失败，请确认已安装 ffmpeg（${error.message}）。`)))
@@ -83,13 +84,13 @@ function convertToWav(binary, mimeType) {
   })
 }
 
-async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
+async function transcribeAudio(audioBase64: string, mimeType = 'audio/webm'): Promise<string> {
   if (!sttBaseUrl || !sttModel || !sttApiKey) throw new Error('语音转写服务尚未配置。')
   const binary = Buffer.from(audioBase64, 'base64')
   if (!binary.length) throw new Error('录音内容为空。')
   const wav = await convertToWav(binary, mimeType)
   const form = new FormData()
-  form.append('file', new Blob([wav], { type: 'audio/wav' }), 'answer.wav')
+  form.append('file', new Blob([wav as unknown as BlobPart], { type: 'audio/wav' }), 'answer.wav')
   form.append('model', sttModel)
   const response = await fetch(`${sttBaseUrl}/v1/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${sttApiKey}` }, body: form })
   const payload = await response.json().catch(() => ({}))
@@ -98,10 +99,10 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
   return payload.text.trim()
 }
 
-function normalizeBlueprint(value) {
+function normalizeBlueprint(value: any) {
   if (!Array.isArray(value)) throw new Error('模型返回的问题蓝图不是数组。')
   const allowed = ['self_introduction', 'project_experience', 'knowledge', 'scenario', 'follow_up', 'candidate_questions']
-  return value.map((item) => ({
+  return value.map((item: any) => ({
     stage: allowed.includes(item.stage) ? item.stage : 'knowledge',
     kind: String(item.kind || '八股题').trim(),
     question: String(item.question || item.title || '').trim(),
@@ -111,7 +112,7 @@ function normalizeBlueprint(value) {
   })).filter((item) => item.question).slice(0, 18)
 }
 
-function fallbackBlueprint(profile) {
+function fallbackBlueprint(profile: any) {
   const project = profile.projects?.[0]?.name || '你简历中的核心项目'
   return [
     { stage: 'self_introduction', kind: '自我介绍', question: '请做一个 1-2 分钟的自我介绍，重点讲和这个岗位最相关的经历。', focus: '表达结构、岗位匹配度', referenceAnswer: '应包含个人定位、最相关经历、核心能力和与岗位的匹配关系。', followUps: ['为什么考虑这个岗位？'] },
@@ -123,14 +124,14 @@ function fallbackBlueprint(profile) {
   ]
 }
 
-function normalizeStructuredProfile(value, resumeText = '', jdText = '') {
+function normalizeStructuredProfile(value: any, resumeText = '', jdText = '') {
   const candidate = value?.candidate || {}
   const job = value?.job || {}
-  const list = (items) => Array.isArray(items) ? items.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20) : []
-  const projects = Array.isArray(candidate.projects) ? candidate.projects.map((item) => ({
+  const list = (items: any) => Array.isArray(items) ? items.map((item: any) => String(item || '').trim()).filter(Boolean).slice(0, 20) : []
+  const projects = Array.isArray(candidate.projects) ? candidate.projects.map((item: any) => ({
     name: String(item?.name || '').trim(), background: String(item?.background || '').trim(), responsibilities: list(item?.responsibilities), techStack: list(item?.techStack), challenges: list(item?.challenges), solutions: list(item?.solutions), results: list(item?.results), risks: list(item?.risks),
-  })).filter((item) => item.name).slice(0, 12) : []
-  const experiences = Array.isArray(candidate.experiences) ? candidate.experiences.map((item) => ({ company: String(item?.company || '').trim(), title: String(item?.title || '').trim(), period: String(item?.period || '').trim(), responsibilities: list(item?.responsibilities) })).filter((item) => item.company || item.title).slice(0, 12) : []
+  })).filter((item: any) => item.name).slice(0, 12) : []
+  const experiences = Array.isArray(candidate.experiences) ? candidate.experiences.map((item: any) => ({ company: String(item?.company || '').trim(), title: String(item?.title || '').trim(), period: String(item?.period || '').trim(), responsibilities: list(item?.responsibilities) })).filter((item: any) => item.company || item.title).slice(0, 12) : []
   return {
     candidate: { name: String(candidate.name || '').trim(), headline: String(candidate.headline || '').trim(), yearsExperience: Math.max(0, Number(candidate.yearsExperience) || 0), skills: list(candidate.skills), experiences, projects, sourceText: resumeText.slice(0, 80_000) },
     job: { role: String(job.role || '').trim(), responsibilities: list(job.responsibilities), requiredSkills: list(job.requiredSkills), preferredExperience: list(job.preferredExperience), interviewSignals: list(job.interviewSignals), sourceText: jdText.slice(0, 30_000) },
@@ -165,7 +166,7 @@ async function parseStructuredProfile(resumeText = '', jdText = '', existing: Re
   }
 }
 
-async function generateInterviewBlueprint(profile) {
+async function generateInterviewBlueprint(profile: any) {
   if (!baseUrl || !model || !apiKey) return fallbackBlueprint(profile)
   const source = JSON.stringify(profile).slice(0, 30_000)
   try {
@@ -182,8 +183,8 @@ async function generateInterviewBlueprint(profile) {
   }
 }
 
-async function generateInterviewReport(session, turns) {
-  const fallback = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item) => item.question) }
+async function generateInterviewReport(session: any, turns: any[]) {
+  const fallback = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item: any) => item.question) }
   if (!baseUrl || !model || !apiKey) return fallback
   try {
     const response = await fetch(`${baseUrl}/v1/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.2, max_tokens: 1800, messages: [
@@ -199,7 +200,7 @@ async function generateInterviewReport(session, turns) {
   }
 }
 
-function fallbackNextAction(session, answer) {
+function fallbackNextAction(session: any, answer: string) {
   const current = session.blueprint[session.currentIndex]
   const normalized = answer.trim()
   const hasWeakSignal = normalized.length < 45 || !/[0-9%]|结果|指标|影响|负责/.test(normalized)
@@ -209,7 +210,7 @@ function fallbackNextAction(session, answer) {
   return { action: 'advance_stage', reason: '当前环节已完成，进入下一阶段。', question: '', kind: '进入下一阶段', focus: '', referenceAnswer: '' }
 }
 
-async function decideNextAction(session, answer) {
+async function decideNextAction(session: any, answer: string) {
   const fallback = fallbackNextAction(session, answer)
   if (!baseUrl || !model || !apiKey) return fallback
   try {
@@ -231,9 +232,9 @@ async function decideNextAction(session, answer) {
   }
 }
 
-function normalizeDrafts(value) {
+function normalizeDrafts(value: any) {
   if (!Array.isArray(value)) throw new Error('模型返回的题目不是数组。')
-  return value.map((item) => ({
+  return value.map((item: any) => ({
     title: String(item.title ?? item.question ?? '').trim(),
     category: String(item.category ?? '未分类').trim(),
     difficulty: ['简单', '中等', '困难'].includes(item.difficulty) ? item.difficulty : '中等',
@@ -245,16 +246,16 @@ function normalizeDrafts(value) {
   })).filter((item) => item.title)
 }
 
-function normalizeQuestionOutline(value, category) {
+function normalizeQuestionOutline(value: any, category: string) {
   if (!Array.isArray(value) || !value.length) throw new Error('questions 必须是非空数组。')
-  return value.map((item) => ({
+  return value.map((item: any) => ({
     title: String(item.title || item.question || '').trim(),
     difficulty: ['简单', '中等', '困难'].includes(item.difficulty) ? item.difficulty : '中等',
     category: String(category || item.category || '未分类').trim() || '未分类',
   })).filter((item) => item.title).slice(0, 50)
 }
 
-async function callModel(source) {
+async function callModel(source: string) {
   const content = await completeChat({
       model: importModel,
       temperature: 0.1,
@@ -267,7 +268,7 @@ async function callModel(source) {
   return normalizeDrafts(extractJsonArray(content, '模型返回的题目不是有效 JSON。'))
 }
 
-async function callEnrichmentModel(outlines, category) {
+async function callEnrichmentModel(outlines: any[], category: string) {
   if (!baseUrl || !importModel || !apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
@@ -319,7 +320,7 @@ async function callEnrichmentModel(outlines, category) {
   })
 }
 
-async function enrichQuestionBatch(outlines, category) {
+async function enrichQuestionBatch(outlines: any[], category: string) {
   const chunks = []
   for (let index = 0; index < outlines.length; index += 6) chunks.push(outlines.slice(index, index + 6))
   const results = await Promise.all(chunks.map(async (chunk) => {
@@ -338,7 +339,7 @@ async function enrichQuestionBatch(outlines, category) {
   return results.flat()
 }
 
-async function scoreAnswer(question, answer) {
+async function scoreAnswer(question: any, answer: string) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
   try {
@@ -366,15 +367,15 @@ async function scoreAnswer(question, answer) {
   }
 }
 
-function fallbackScore(question, answer) {
+function fallbackScore(question: any, answer: string) {
   const normalized = answer.trim()
   const lengthScore = Math.min(40, Math.round(normalized.length / 5))
-  const keywordScore = question.answer.split(/[，。；、\s]+/).filter((word) => word.length > 1 && normalized.includes(word)).length * 10
+  const keywordScore = question.answer.split(/[，。；、\s]+/).filter((word: string) => word.length > 1 && normalized.includes(word)).length * 10
   const score = Math.min(85, Math.max(10, lengthScore + Math.min(50, keywordScore)))
   return { score, dimensions: { correctness: score, structure: normalized.length > 40 ? 70 : 35, clarity: normalized.length > 20 ? 65 : 30, relevance: keywordScore ? 75 : 35 }, strengths: normalized.length > 40 ? ['回答包含了一定展开'] : ['已经开始组织答案'], gaps: keywordScore ? ['可以补充边界条件和具体例子'] : ['回答过短，缺少关键概念'], betterAnswer: question.interviewAnswer || question.answer, source: 'fallback' }
 }
 
-async function handle(request, response) {
+async function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' })
     response.end()

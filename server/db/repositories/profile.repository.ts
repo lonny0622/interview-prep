@@ -17,7 +17,7 @@ const toResume = (row: any) => ({
   updatedAt: row.updated_at,
 })
 
-const toJobProfile = (row: any) => ({ id: row.id, title: row.title, sortOrder: row.sort_order, isDefault: Boolean(row.is_default), resumes: [] })
+const toJobProfile = (row: any) => ({ id: row.id, title: row.title, sortOrder: row.sort_order, isDefault: Boolean(row.is_default), resumes: [] as any[] })
 
 const toProfile = (row: any) => row ? ({
   id: row.id,
