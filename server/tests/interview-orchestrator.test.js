@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { decideNextAction, generateInterviewBlueprint, generateInterviewReport } from '../../dist-server/services/interview/orchestrator.js'
 
-const offlineConfig = { baseUrl: '', model: '', importModel: '', apiKey: '' }
+const offlineConfig = { baseUrl: '', model: '', importModel: '', apiKey: '', requestTimeoutMs: 100 }
 
 describe('interview orchestrator fallbacks', () => {
   it('builds a complete blueprint from a stored candidate project', async () => {

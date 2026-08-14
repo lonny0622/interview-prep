@@ -8,7 +8,7 @@ describe('profile parser', () => {
       '张三\n技能：TypeScript React\n项目\n面试助手',
       '岗位：前端工程师',
       {},
-      { baseUrl: '', model: '', importModel: '', apiKey: '' },
+      { baseUrl: '', model: '', importModel: '', apiKey: '', requestTimeoutMs: 100 },
     )
     assert.equal(profile.candidate.name, '张三')
     assert.deepEqual(profile.candidate.skills, ['TypeScript', 'React'])

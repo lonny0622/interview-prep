@@ -1,4 +1,5 @@
 import { errorMessage } from '../../http/errors.js'
+import { completeChat } from '../llm/client.js'
 import { extractJsonArray, extractJsonObject } from '../llm/json.js'
 
 export type InterviewOrchestratorConfig = {
@@ -6,6 +7,7 @@ export type InterviewOrchestratorConfig = {
   model: string
   importModel: string
   apiKey: string
+  requestTimeoutMs: number
 }
 
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
@@ -41,18 +43,16 @@ export async function generateInterviewBlueprint(profile: any, config: Interview
   if (!config.baseUrl || !config.model || !config.apiKey) return fallbackBlueprint(profile)
   const source = JSON.stringify(profile).slice(0, 30_000)
   try {
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.importModel, temperature: 0.3, max_tokens: 2200, messages: [
+    const content = await completeChat({
+      model: config.importModel,
+      temperature: 0.3,
+      max_tokens: 2200,
+      messages: [
         { role: 'system', content: `你是资深面试官，依据候选人资料和 JD 生成一份可执行的模拟面试问题蓝图。必须覆盖自我介绍、简历项目题、八股题、场景题、发散追问、反问环节；项目题必须引用候选人资料中真实出现的项目，不能编造经历。只输出 JSON 数组，结构：${interviewBlueprintSchema}` },
         { role: 'user', content: source },
-      ] }),
-    })
-    const payload = await response.json().catch(() => ({})) as { error?: { message?: string }; choices?: Array<{ message?: { content?: unknown } }> }
-    if (!response.ok) throw new Error(payload.error?.message || `面试问题生成失败（${response.status}）。`)
-    const content = payload.choices?.[0]?.message?.content
-    return normalizeBlueprint(extractJsonArray(typeof content === 'string' ? content : '', '模型返回的问题蓝图不是有效 JSON。'))
+      ],
+    }, config)
+    return normalizeBlueprint(extractJsonArray(content, '模型返回的问题蓝图不是有效 JSON。'))
   } catch (error) {
     console.warn(`Interview blueprint fallback: ${errorMessage(error)}`)
     return fallbackBlueprint(profile)
@@ -64,18 +64,16 @@ export async function generateInterviewReport(session: any, turns: any[], config
   const fallback = { summary: '本次模拟面试已完成。建议结合每轮回答继续补充具体数据、个人贡献和复盘动作。', strengths: ['完成了完整面试流程'], risks: ['部分回答还可以增加背景、行动和结果'], suggestions: ['重新回答项目题并补充量化结果', '针对场景题练习先判断影响范围再制定方案'], nextQuestions: session.blueprint.slice(0, 3).map((item: any) => item.question) }
   if (!config.baseUrl || !config.model || !config.apiKey) return fallback
   try {
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.model, temperature: 0.2, max_tokens: 1800, messages: [
+    const content = await completeChat({
+      model: config.model,
+      temperature: 0.2,
+      max_tokens: 1800,
+      messages: [
         { role: 'system', content: '你是面试复盘教练。只输出 JSON 对象，字段为 summary、strengths（字符串数组）、risks（字符串数组）、suggestions（字符串数组）、nextQuestions（字符串数组）。评价必须基于实际回答，不要编造经历。' },
         { role: 'user', content: JSON.stringify({ profile: session.profile, turns }).slice(0, 40_000) },
-      ] }),
-    })
-    const payload = await response.json().catch(() => ({})) as { error?: { message?: string }; choices?: Array<{ message?: { content?: unknown } }> }
-    if (!response.ok) throw new Error(payload.error?.message || `面试复盘失败（${response.status}）。`)
-    const content = payload.choices?.[0]?.message?.content
-    return { ...fallback, ...extractJsonObject(typeof content === 'string' ? content : '', '模型返回的复盘结果不是有效 JSON。') }
+      ],
+    }, config)
+    return { ...fallback, ...extractJsonObject(content, '模型返回的复盘结果不是有效 JSON。') }
   } catch (error) {
     console.warn(`Interview report fallback: ${errorMessage(error)}`)
     return fallback
@@ -98,18 +96,16 @@ export async function decideNextAction(session: any, answer: string, config: Int
   if (!config.baseUrl || !config.model || !config.apiKey) return fallback
   try {
     const current = session.blueprint[session.currentIndex]
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.model, temperature: 0.2, max_tokens: 700, messages: [
+    const content = await completeChat({
+      model: config.model,
+      temperature: 0.2,
+      max_tokens: 700,
+      messages: [
         { role: 'system', content: `你是模拟面试编排 Agent。只能输出 JSON，不要代码围栏。${nextActionSchema}。只允许 follow_up、advance_stage、finish。当前阶段未完成时不能 finish；最多只生成一个追问；追问必须基于当前回答，不得编造候选人经历。` },
         { role: 'user', content: JSON.stringify({ current, answer, currentIndex: session.currentIndex, total: session.blueprint.length }) },
-      ] }),
-    })
-    const payload = await response.json().catch(() => ({})) as { error?: { message?: string }; choices?: Array<{ message?: { content?: unknown } }> }
-    if (!response.ok) throw new Error(payload.error?.message || `Agent 请求失败（${response.status}）。`)
-    const content = payload.choices?.[0]?.message?.content
-    const value = extractJsonObject<any>(typeof content === 'string' ? content : '', '模型返回的下一步动作不是有效 JSON。')
+      ],
+    }, config)
+    const value = extractJsonObject<any>(content, '模型返回的下一步动作不是有效 JSON。')
     if (!['follow_up', 'advance_stage', 'finish'].includes(value.action)) throw new Error('Agent action 不合法。')
     if (value.action === 'follow_up' && !String(value.question || '').trim()) throw new Error('Agent 追问为空。')
     if (value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1) value.action = 'finish'

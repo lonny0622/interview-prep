@@ -17,12 +17,13 @@ import { decideNextAction as decideNextActionService, generateInterviewBlueprint
 import { enrichQuestionBatch as enrichQuestionBatchService, normalizeQuestionOutline, parseQuestionSource } from './services/llm/questions.js'
 import { fallbackScore, scoreAnswer as scoreAnswerService } from './services/llm/scoring.js'
 
-const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port } = appConfig
+const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
-const parseStructuredProfile = (resumeText: string, jdText: string, existing: Record<string, any>) => parseStructuredProfileService(resumeText, jdText, existing, { baseUrl, model, importModel, apiKey })
-const generateInterviewBlueprint = (profile: any) => generateInterviewBlueprintService(profile, { baseUrl, model, importModel, apiKey })
-const decideNextAction = (session: any, answer: string) => decideNextActionService(session, answer, { baseUrl, model, importModel, apiKey })
-const generateInterviewReport = (session: any, turns: any[]) => generateInterviewReportService(session, turns, { baseUrl, model, importModel, apiKey })
+const llmConfig = { baseUrl, model, importModel, apiKey, requestTimeoutMs }
+const parseStructuredProfile = (resumeText: string, jdText: string, existing: Record<string, any>) => parseStructuredProfileService(resumeText, jdText, existing, llmConfig)
+const generateInterviewBlueprint = (profile: any) => generateInterviewBlueprintService(profile, llmConfig)
+const decideNextAction = (session: any, answer: string) => decideNextActionService(session, answer, llmConfig)
+const generateInterviewReport = (session: any, turns: any[]) => generateInterviewReportService(session, turns, llmConfig)
 const callModel = (source: string) => parseQuestionSource(source, importModel)
 const enrichQuestionBatch = (outlines: any[], category: string) => enrichQuestionBatchService(outlines, category, importModel)
 const scoreAnswer = (question: any, answer: string) => scoreAnswerService(question, answer, model)

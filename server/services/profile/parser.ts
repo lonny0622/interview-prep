@@ -1,4 +1,5 @@
 import { errorMessage } from '../../http/errors.js'
+import { completeChat } from '../llm/client.js'
 import { extractJsonObject } from '../llm/json.js'
 
 export type ProfileParserConfig = {
@@ -6,6 +7,7 @@ export type ProfileParserConfig = {
   model: string
   importModel: string
   apiKey: string
+  requestTimeoutMs: number
 }
 
 const profileSchema = '{"candidate":{"name":"","headline":"","yearsExperience":0,"skills":[""],"experiences":[{"company":"","title":"","period":"","responsibilities":[""]}],"projects":[{"name":"","background":"","responsibilities":[""],"techStack":[""],"challenges":[""],"solutions":[""],"results":[""],"risks":[""]}]},"job":{"role":"","responsibilities":[""],"requiredSkills":[""],"preferredExperience":[""],"interviewSignals":[""]},"gaps":[""]}'
@@ -40,18 +42,16 @@ export async function parseStructuredProfile(resumeText = '', jdText = '', exist
   const fallback = fallbackStructuredProfile(resumeText, jdText, existing)
   if (!config.baseUrl || !config.model || !config.apiKey || (!resumeText.trim() && !jdText.trim())) return fallback
   try {
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.importModel, temperature: 0.1, max_tokens: 2400, messages: [
+    const content = await completeChat({
+      model: config.importModel,
+      temperature: 0.1,
+      max_tokens: 2400,
+      messages: [
         { role: 'system', content: `你是简历和岗位画像解析器。只输出 JSON，不得输出代码围栏。严格遵守结构：${profileSchema}。只能提取文本中明确出现的事实；未知字段填空数组，不得编造项目、公司、技术或结果。项目必须保留原文项目名。` },
         { role: 'user', content: JSON.stringify({ resumeText: resumeText.slice(0, 80_000), jdText: jdText.slice(0, 30_000) }) },
-      ] }),
-    })
-    const payload = await response.json().catch(() => ({})) as { error?: { message?: string }; choices?: Array<{ message?: { content?: unknown } }> }
-    if (!response.ok) throw new Error(payload.error?.message || `资料解析失败（${response.status}）。`)
-    const content = payload.choices?.[0]?.message?.content
-    return normalizeStructuredProfile(extractJsonObject(typeof content === 'string' ? content : '', '模型返回的资料画像不是有效 JSON。'), resumeText, jdText)
+      ],
+    }, config)
+    return normalizeStructuredProfile(extractJsonObject(content, '模型返回的资料画像不是有效 JSON。'), resumeText, jdText)
   } catch (error) {
     console.warn(`Structured profile fallback: ${errorMessage(error)}`)
     return fallback
