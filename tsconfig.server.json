@@ -9,6 +9,7 @@
     "outDir": "dist-server",
     "sourceMap": true,
     "strict": false,
+    "useUnknownInCatchVariables": true,
     "skipLibCheck": true,
     "noEmitOnError": true
   },

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { appConfig } from './config/env.js'
 import { readBody } from './http/body.js'
 import { jsonResponse } from './http/response.js'
+import { errorMessage } from './http/errors.js'
 import { completeChat } from './services/llm/client.js'
 import { extractJsonArray, extractJsonObject } from './services/llm/json.js'
 import { handleProfileRoutes } from './routes/profile.routes.js'
@@ -159,7 +160,7 @@ async function parseStructuredProfile(resumeText = '', jdText = '', existing: Re
     if (!response.ok) throw new Error(payload.error?.message || `资料解析失败（${response.status}）。`)
     return normalizeStructuredProfile(extractJsonObject(payload.choices?.[0]?.message?.content || '', '模型返回的资料画像不是有效 JSON。'), resumeText, jdText)
   } catch (error) {
-    console.warn(`Structured profile fallback: ${error.message}`)
+    console.warn(`Structured profile fallback: ${errorMessage(error)}`)
     return fallback
   }
 }
@@ -176,7 +177,7 @@ async function generateInterviewBlueprint(profile) {
     if (!response.ok) throw new Error(payload.error?.message || `面试问题生成失败（${response.status}）。`)
     return normalizeBlueprint(extractJsonArray(payload.choices?.[0]?.message?.content || '', '模型返回的问题蓝图不是有效 JSON。'))
   } catch (error) {
-    console.warn(`Interview blueprint fallback: ${error.message}`)
+    console.warn(`Interview blueprint fallback: ${errorMessage(error)}`)
     return fallbackBlueprint(profile)
   }
 }
@@ -193,7 +194,7 @@ async function generateInterviewReport(session, turns) {
     if (!response.ok) throw new Error(payload.error?.message || `面试复盘失败（${response.status}）。`)
     return { ...fallback, ...extractJsonObject(payload.choices?.[0]?.message?.content || '', '模型返回的复盘结果不是有效 JSON。') }
   } catch (error) {
-    console.warn(`Interview report fallback: ${error.message}`)
+    console.warn(`Interview report fallback: ${errorMessage(error)}`)
     return fallback
   }
 }
@@ -225,7 +226,7 @@ async function decideNextAction(session, answer) {
     if (value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1) value.action = 'finish'
     return { ...fallback, ...value, question: String(value.question || '').trim(), referenceAnswer: String(value.referenceAnswer || '').trim() }
   } catch (error) {
-    console.warn(`Interview next action fallback: ${error.message}`)
+    console.warn(`Interview next action fallback: ${errorMessage(error)}`)
     return fallback
   }
 }
@@ -287,7 +288,7 @@ async function callEnrichmentModel(outlines, category) {
       }),
     })
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error(`模型请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
+    if (error instanceof Error && error.name === 'AbortError') throw new Error(`模型请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
     throw error
   } finally {
     clearTimeout(timeout)
@@ -328,7 +329,7 @@ async function enrichQuestionBatch(outlines, category) {
         return await callEnrichmentModel(chunk, category)
       } catch (error) {
         lastError = error
-        if (attempt === 0 && !/配置不完整|请求超过/.test(error.message || '')) await new Promise((resolveRetry) => setTimeout(resolveRetry, 250))
+        if (attempt === 0 && !/配置不完整|请求超过/.test(errorMessage(error))) await new Promise((resolveRetry) => setTimeout(resolveRetry, 250))
         else break
       }
     }
@@ -358,7 +359,7 @@ async function scoreAnswer(question, answer) {
     if (!candidate) throw new Error('评分结果不是有效 JSON。')
     return JSON.parse(candidate)
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error(`评分请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
+    if (error instanceof Error && error.name === 'AbortError') throw new Error(`评分请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
     throw error
   } finally {
     clearTimeout(timeout)
@@ -391,7 +392,7 @@ async function handle(request, response) {
       const profile = await parseStructuredProfile(resumeText, jdText, body.existing || {})
       return jsonResponse(response, 200, { profile, fallback: !baseUrl || !model || !apiKey })
     } catch (error) {
-      return jsonResponse(response, 400, { error: error.message || '资料解析失败。' })
+      return jsonResponse(response, 400, { error: errorMessage(error, '资料解析失败。') })
     }
   }
   if (await handleInterviewRoutes(request, response, { parseStructuredProfile, generateInterviewBlueprint, scoreAnswer, decideNextAction, generateInterviewReport })) return
@@ -400,6 +401,6 @@ async function handle(request, response) {
   jsonResponse(response, 404, { error: 'Not Found' })
 }
 
-createServer((request, response) => handle(request, response).catch((error) => jsonResponse(response, 500, { error: error.message }))).listen(port, '127.0.0.1', () => {
+createServer((request, response) => handle(request, response).catch((error) => jsonResponse(response, 500, { error: errorMessage(error) }))).listen(port, '127.0.0.1', () => {
   console.log(`InterviewPrep LLM Gateway listening on http://127.0.0.1:${port}`)
 })

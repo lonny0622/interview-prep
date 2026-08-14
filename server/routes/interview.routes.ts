@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
+import { errorMessage } from '../http/errors.js'
 import { createInterviewSession, completeInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from '../db/repositories/interview.repository.js'
 import { listJobProfiles } from '../db/repositories/profile.repository.js'
 
@@ -38,7 +39,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       const blueprint = await services.generateInterviewBlueprint(profile)
       if (!blueprint.length) { jsonResponse(response, 502, { error: '没有生成有效的面试问题。' }); return true }
       jsonResponse(response, 201, { session: createInterviewSession(profile, blueprint) }); return true
-    } catch (error) { jsonResponse(response, 400, { error: error.message || '模拟面试创建失败。' }); return true }
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '模拟面试创建失败。') }); return true }
   }
   if (is(request, 'GET', '/api/interview-sessions')) { jsonResponse(response, 200, { sessions: listInterviewSessions() }); return true }
   if (is(request, 'GET', /^\/api\/interview-sessions\/[^/]+$/)) {
@@ -55,7 +56,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       let score = null
       try { score = await services.scoreAnswer({ title: body.question, answer: body.referenceAnswer || '', interviewAnswer: body.referenceAnswer || '' }, body.answerText) } catch { score = null }
       jsonResponse(response, 201, { turn: saveInterviewTurn(id, { stage: body.stage || 'knowledge', question: body.question, answerText: body.answerText }, score) }); return true
-    } catch (error) { jsonResponse(response, 400, { error: error.message || '面试回答保存失败。' }); return true }
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '面试回答保存失败。') }); return true }
   }
   if (is(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/next-action$/)) {
     try {
@@ -69,7 +70,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
         ? insertInterviewFollowUp(id, { stage: session.stage, kind: action.kind || '发散追问', question: action.question, focus: action.focus || session.blueprint[session.currentIndex]?.focus || '', referenceAnswer: action.referenceAnswer || '', followUps: [] }) || session
         : session
       jsonResponse(response, 200, { action, session: nextSession }); return true
-    } catch (error) { jsonResponse(response, 400, { error: error.message || '下一步面试动作生成失败。' }); return true }
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '下一步面试动作生成失败。') }); return true }
   }
   if (is(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/complete$/)) {
     try {
@@ -78,7 +79,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       if (!session) { jsonResponse(response, 404, { error: '模拟面试不存在。' }); return true }
       const report = await services.generateInterviewReport(session, listInterviewTurns(id))
       jsonResponse(response, 200, { session: completeInterviewSession(id, report), report }); return true
-    } catch (error) { jsonResponse(response, 400, { error: error.message || '面试复盘失败。' }); return true }
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '面试复盘失败。') }); return true }
   }
   return false
 }
