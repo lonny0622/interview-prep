@@ -6,6 +6,7 @@ import { appConfig } from './config/env.js'
 import { readBody } from './http/body.js'
 import { jsonResponse } from './http/response.js'
 import { completeChat } from './services/llm/client.js'
+import { extractJsonArray, extractJsonObject } from './services/llm/json.js'
 import { handleProfileRoutes } from './routes/profile.routes.js'
 import { handleQuestionRoutes } from './routes/questions.routes.js'
 import { handleInterviewRoutes } from './routes/interview.routes.js'
@@ -96,31 +97,6 @@ async function transcribeAudio(audioBase64, mimeType = 'audio/webm') {
   return payload.text.trim()
 }
 
-function extractJson(content) {
-  if (typeof content !== 'string' || !content.trim()) throw new Error('模型没有返回 JSON 内容。')
-  const candidates = [content.trim(), ...Array.from(content.matchAll(/```(?:json|javascript|typescript|js|ts)?\s*([\s\S]*?)```/gi), (match) => match[1].trim())]
-  let lastError
-  for (const candidate of candidates) {
-    for (let start = candidate.indexOf('['); start >= 0; start = candidate.indexOf('[', start + 1)) {
-      for (let end = candidate.lastIndexOf(']'); end > start; end = candidate.lastIndexOf(']', end - 1)) {
-        try {
-          const value = JSON.parse(candidate.slice(start, end + 1))
-          if (Array.isArray(value)) return value
-        } catch (error) {
-          lastError = error
-        }
-      }
-    }
-  }
-  throw new Error(`模型返回的题目不是有效 JSON。${lastError?.message || ''}`)
-}
-
-function extractObject(content) {
-  const candidate = content.match(/\{[\s\S]*\}/)?.[0]
-  if (!candidate) throw new Error('模型返回的复盘结果不是有效 JSON。')
-  return JSON.parse(candidate)
-}
-
 function normalizeBlueprint(value) {
   if (!Array.isArray(value)) throw new Error('模型返回的问题蓝图不是数组。')
   const allowed = ['self_introduction', 'project_experience', 'knowledge', 'scenario', 'follow_up', 'candidate_questions']
@@ -181,7 +157,7 @@ async function parseStructuredProfile(resumeText = '', jdText = '', existing: Re
     ] }) })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.error?.message || `资料解析失败（${response.status}）。`)
-    return normalizeStructuredProfile(extractObject(payload.choices?.[0]?.message?.content || ''), resumeText, jdText)
+    return normalizeStructuredProfile(extractJsonObject(payload.choices?.[0]?.message?.content || '', '模型返回的资料画像不是有效 JSON。'), resumeText, jdText)
   } catch (error) {
     console.warn(`Structured profile fallback: ${error.message}`)
     return fallback
@@ -198,7 +174,7 @@ async function generateInterviewBlueprint(profile) {
     ] }) })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.error?.message || `面试问题生成失败（${response.status}）。`)
-    return normalizeBlueprint(extractJson(payload.choices?.[0]?.message?.content || ''))
+    return normalizeBlueprint(extractJsonArray(payload.choices?.[0]?.message?.content || '', '模型返回的问题蓝图不是有效 JSON。'))
   } catch (error) {
     console.warn(`Interview blueprint fallback: ${error.message}`)
     return fallbackBlueprint(profile)
@@ -215,7 +191,7 @@ async function generateInterviewReport(session, turns) {
     ] }) })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.error?.message || `面试复盘失败（${response.status}）。`)
-    return { ...fallback, ...extractObject(payload.choices?.[0]?.message?.content || '') }
+    return { ...fallback, ...extractJsonObject(payload.choices?.[0]?.message?.content || '', '模型返回的复盘结果不是有效 JSON。') }
   } catch (error) {
     console.warn(`Interview report fallback: ${error.message}`)
     return fallback
@@ -243,7 +219,7 @@ async function decideNextAction(session, answer) {
     ] }) })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.error?.message || `Agent 请求失败（${response.status}）。`)
-    const value = extractObject(payload.choices?.[0]?.message?.content || '')
+    const value = extractJsonObject<any>(payload.choices?.[0]?.message?.content || '', '模型返回的下一步动作不是有效 JSON。')
     if (!['follow_up', 'advance_stage', 'finish'].includes(value.action)) throw new Error('Agent action 不合法。')
     if (value.action === 'follow_up' && !String(value.question || '').trim()) throw new Error('Agent 追问为空。')
     if (value.action !== 'follow_up' && session.currentIndex >= session.blueprint.length - 1) value.action = 'finish'
@@ -287,7 +263,7 @@ async function callModel(source) {
         { role: 'user', content: source },
       ],
     })
-  return normalizeDrafts(extractJson(content))
+  return normalizeDrafts(extractJsonArray(content, '模型返回的题目不是有效 JSON。'))
 }
 
 async function callEnrichmentModel(outlines, category) {
@@ -320,7 +296,7 @@ async function callEnrichmentModel(outlines, category) {
   if (!response.ok) throw new Error(payload.error?.message || `上游模型请求失败（${response.status}）。`)
   const content = payload.choices?.[0]?.message?.content
   if (typeof content !== 'string') throw new Error('上游模型没有返回文本内容。')
-  const value = extractJson(content)
+  const value = extractJsonArray<any>(content, '模型返回的题目不是有效 JSON。')
   if (!Array.isArray(value) || value.length !== outlines.length) throw new Error(`模型返回 ${Array.isArray(value) ? value.length : 0} 道题，预期 ${outlines.length} 道。`)
   return outlines.map((outline, index) => {
     const item = value[index] || {}
