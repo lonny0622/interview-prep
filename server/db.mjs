@@ -37,6 +37,13 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS learning_progress (
+    id TEXT PRIMARY KEY,
+    question_id TEXT NOT NULL,
+    session_id TEXT,
+    mastery TEXT NOT NULL CHECK (mastery IN ('未学习', '了解', '熟悉', '掌握')),
+    learned_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS practice_sessions (
     id TEXT PRIMARY KEY,
     question_ids TEXT NOT NULL,
@@ -397,6 +404,38 @@ export function createLearningSession(questionIds) {
   const timestamp = now()
   database.prepare('INSERT INTO learning_sessions (id, question_ids, current_index, created_at, updated_at) VALUES (?, ?, 0, ?, ?)').run(id, JSON.stringify(questionIds), timestamp, timestamp)
   return { id, questionIds, currentIndex: 0, createdAt: timestamp }
+}
+
+export function saveLearningProgress(questionId, mastery, sessionId = null) {
+  const question = database.prepare('SELECT id FROM questions WHERE id = ?').get(questionId)
+  if (!question) return null
+  const id = crypto.randomUUID()
+  const learnedAt = now()
+  database.prepare('INSERT INTO learning_progress (id, question_id, session_id, mastery, learned_at) VALUES (?, ?, ?, ?, ?)').run(id, questionId, sessionId || null, mastery, learnedAt)
+  return { id, questionId, sessionId: sessionId || null, mastery, learnedAt }
+}
+
+export function getLearningStats() {
+  const masteryValues = ['未学习', '了解', '熟悉', '掌握']
+  const mastery = Object.fromEntries(masteryValues.map((value) => [value, 0]))
+  for (const row of database.prepare('SELECT mastery, COUNT(*) AS count FROM questions GROUP BY mastery').all()) mastery[row.mastery] = Number(row.count)
+
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(startOfToday.toISOString()).count)
+  const totalQuestions = Number(database.prepare('SELECT COUNT(*) AS count FROM questions').get().count)
+  const categories = database.prepare(`SELECT category, mastery, COUNT(*) AS count
+    FROM questions
+    GROUP BY category, mastery
+    ORDER BY category COLLATE NOCASE ASC`).all()
+  const categoryMap = new Map()
+  for (const row of categories) {
+    if (!categoryMap.has(row.category)) categoryMap.set(row.category, { name: row.category, total: 0, mastery: Object.fromEntries(masteryValues.map((value) => [value, 0])) })
+    const item = categoryMap.get(row.category)
+    item.mastery[row.mastery] = Number(row.count)
+    item.total += Number(row.count)
+  }
+  return { todayLearned, totalQuestions, mastery, categories: [...categoryMap.values()] }
 }
 
 export function createPracticeSession(questionIds, filters = {}) {

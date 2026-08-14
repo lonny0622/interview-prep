@@ -17,6 +17,13 @@ import { profileApi } from './api/profileApi'
 
 type Difficulty = '简单' | '中等' | '困难'
 type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
+type LearningFilters = { category: string; difficulty: string; mastery: string }
+type LearningStats = {
+  todayLearned: number
+  totalQuestions: number
+  mastery: Record<Mastery, number>
+  categories: Array<{ name: string; total: number; mastery: Record<Mastery, number> }>
+}
 
 type Question = {
   id: string
@@ -88,6 +95,12 @@ const navItems = [
 const emptyDraft: QuestionDraft = { title: '', category: '', difficulty: '中等', importance: 3, answer: '', explanation: '', interviewAnswer: '', followUps: [] }
 
 const masteryOrder: Mastery[] = ['未学习', '了解', '熟悉', '掌握']
+const emptyLearningFilters: LearningFilters = { category: '全部分类', difficulty: '全部难度', mastery: '未学习' }
+const difficultyOrder: Difficulty[] = ['简单', '中等', '困难']
+
+function createMasteryCounts(): Record<Mastery, number> {
+  return { '未学习': 0, 了解: 0, 熟悉: 0, 掌握: 0 }
+}
 
 function parseImportedQuestions(source = ''): QuestionDraft[] {
   const trimmed = String(source || '').trim()
@@ -150,6 +163,9 @@ function App() {
   const [learningReveal, setLearningReveal] = useState(false)
   const [serverReady, setServerReady] = useState(false)
   const [learningSessionId, setLearningSessionId] = useState<string | null>(null)
+  const [learningSessionCreatedFor, setLearningSessionCreatedFor] = useState('')
+  const [learningFilters, setLearningFilters] = useState<LearningFilters>(emptyLearningFilters)
+  const [learningStats, setLearningStats] = useState<LearningStats | null>(null)
   const [practice, setPractice] = useState<{ questionIds: string[]; index: number; sessionId: string; answer: string; submitted: boolean; scoring: boolean; score: ScoreResult | null; category: string; difficulty: string; mastery: string } | null>(null)
   const [voice, setVoice] = useState<VoiceState>({ recording: false, transcribing: false, audioUrl: '', error: '' })
   const [interview, setInterview] = useState<{ session: InterviewSession; turns: Array<{ question: string; answerText: string; stage: string; score?: ScoreResult | null }>; answer: string; loading: boolean; completing: boolean; report: InterviewReport | null; error: string } | null>(null)
@@ -193,15 +209,6 @@ function App() {
     profileApi.get().then((payload) => { setProfile(payload.profile); setJobs(payload.profile.jobs || []) }).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    if (activeNav !== 'learning' || !serverReady || learningSessionId || !questions.length) return
-    fetch('/api/learning-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: questions.map((question) => question.id) }) })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习 session 创建失败')))
-      .then((payload: { session: { id: string } }) => setLearningSessionId(payload.session.id))
-      .catch(() => setServerReady(false))
-  }, [activeNav, learningSessionId, questions, serverReady])
-
-
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set([...categoryCatalog.map((item) => item.name), ...questions.map((question) => question.category)])]
   const filteredQuestions = useMemo(
@@ -215,6 +222,62 @@ function App() {
     }),
     [category, difficulty, mastery, query, questions],
   )
+
+  const learningQuestions = useMemo(() => {
+    const candidates = questions.filter((question) => (
+      (learningFilters.category === '全部分类' || question.category === learningFilters.category)
+      && (learningFilters.difficulty === '全部难度' || question.difficulty === learningFilters.difficulty)
+      && (learningFilters.mastery === '全部掌握度' || question.mastery === learningFilters.mastery)
+    ))
+    return candidates.sort((a, b) => {
+      const masteryDelta = masteryOrder.indexOf(a.mastery) - masteryOrder.indexOf(b.mastery)
+      return masteryDelta || b.importance - a.importance || a.title.localeCompare(b.title, 'zh-CN')
+    })
+  }, [learningFilters, questions])
+
+  const learningFilterKey = `${learningFilters.category}|${learningFilters.difficulty}|${learningFilters.mastery}|${learningQuestions.map((question) => question.id).join(',')}`
+
+  const localLearningStats = useMemo<LearningStats>(() => {
+    const mastery = createMasteryCounts()
+    const categoryMap = new Map<string, { name: string; total: number; mastery: Record<Mastery, number> }>()
+    for (const question of questions) {
+      mastery[question.mastery] += 1
+      if (!categoryMap.has(question.category)) categoryMap.set(question.category, { name: question.category, total: 0, mastery: createMasteryCounts() })
+      const item = categoryMap.get(question.category)!
+      item.total += 1
+      item.mastery[question.mastery] += 1
+    }
+    return { todayLearned: 0, totalQuestions: questions.length, mastery, categories: [...categoryMap.values()] }
+  }, [questions])
+
+  useEffect(() => {
+    if (activeNav !== 'learning' || !serverReady || !learningQuestions.length || learningSessionCreatedFor === learningFilterKey) return
+    fetch('/api/learning-sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionIds: learningQuestions.map((question) => question.id), filters: learningFilters }) })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习 session 创建失败')))
+      .then((payload: { session: { id: string } }) => { setLearningSessionId(payload.session.id); setLearningSessionCreatedFor(learningFilterKey) })
+      .catch(() => setServerReady(false))
+  }, [activeNav, learningFilters, learningQuestions, learningFilterKey, learningSessionCreatedFor, serverReady])
+
+  useEffect(() => {
+    if (!serverReady) return
+    fetch('/api/learning/stats')
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('学习统计不可用')))
+      .then((payload: { stats: LearningStats }) => { if (payload.stats) setLearningStats(payload.stats) })
+      .catch(() => {})
+  }, [activeNav, serverReady])
+
+  const refreshLearningStats = () => {
+    if (!serverReady) return
+    fetch('/api/learning/stats').then((response) => response.ok ? response.json() : Promise.reject(new Error('学习统计不可用'))).then((payload: { stats: LearningStats }) => { if (payload.stats) setLearningStats(payload.stats) }).catch(() => {})
+  }
+
+  const changeLearningFilters = (patch: Partial<LearningFilters>) => {
+    setLearningFilters((current) => ({ ...current, ...patch }))
+    setLearningIndex(0)
+    setLearningReveal(false)
+    setLearningSessionId(null)
+    setLearningSessionCreatedFor('')
+  }
 
   const updateMastery = (nextMastery: Mastery) => {
     setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, mastery: nextMastery } : question))
@@ -283,11 +346,6 @@ function App() {
     if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'DELETE' }).catch(() => setServerReady(false))
   }
 
-  const learningQuestions = useMemo(() => [...questions].sort((a, b) => {
-    const masteryDelta = masteryOrder.indexOf(a.mastery) - masteryOrder.indexOf(b.mastery)
-    return masteryDelta || b.importance - a.importance
-  }), [questions])
-
   const importPreview = () => {
     if (!importer) return
     const source = String(importer.source || '')
@@ -342,13 +400,24 @@ function App() {
     setImporter(null)
   }
 
-  const markLearning = (nextMastery: Mastery) => {
+  const markLearning = async (nextMastery: Mastery) => {
     const current = learningQuestions[learningIndex]
     if (!current) return
     setQuestions((items) => items.map((item) => item.id === current.id ? { ...item, mastery: nextMastery } : item))
-    if (serverReady) fetch(`/api/questions/${current.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) }).catch(() => setServerReady(false))
+    if (serverReady) {
+      try {
+        const response = await fetch(`/api/questions/${current.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mastery: nextMastery }) })
+        if (!response.ok) throw new Error('题目掌握度更新失败')
+        await fetch('/api/learning-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionId: current.id, sessionId: learningSessionId, mastery: nextMastery }) })
+        refreshLearningStats()
+      } catch {
+        setServerReady(false)
+      }
+    }
     setLearningReveal(false)
-    if (learningIndex < learningQuestions.length - 1) setLearningIndex((index) => index + 1)
+    const remainsInFilter = learningFilters.mastery === '全部掌握度' || learningFilters.mastery === nextMastery
+    const nextLength = learningQuestions.length - (remainsInFilter ? 0 : 1)
+    if (nextLength > 0) setLearningIndex((index) => Math.min(index + 1, nextLength - 1))
   }
 
   const startPractice = async (filters: { category: string; difficulty: string; mastery: string }) => {
@@ -579,10 +648,16 @@ function App() {
 
   const renderLearning = () => {
     const current = learningQuestions[learningIndex]
-    if (!current) return <div className="placeholder-page"><p className="eyebrow">Learning session</p><h1>今天没有待学习题目</h1><p>题库里的题目都已经标记为掌握，可以回到题库继续补充内容。</p><button className="primary-button" type="button" onClick={() => setActiveNav('library')}>回到题库 <ArrowRight size={13} /></button></div>
+    const stats = learningStats ?? localLearningStats
+    const masteryTotal = Math.max(stats.totalQuestions, 1)
     return <div className="learning-page">
-      <header className="page-header learning-header"><div><p className="eyebrow">Interview workspace / 02</p><h1>学习</h1><p className="page-description">按掌握程度从薄弱处开始，答完再看解析。</p></div><div className="learning-progress"><strong>{learningIndex + 1}</strong><span>/ {learningQuestions.length} 道</span></div></header>
-      <div className="learning-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2><div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div><div className="learning-answer">{learningReveal ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.interviewAnswer}</ReactMarkdown></div> : <button className="reveal-button" type="button" onClick={() => setLearningReveal(true)}>查看答案与解析 <ChevronDown size={14} /></button>}</div><div className="learning-actions"><button className="quiet-button" type="button" disabled={learningIndex === 0} onClick={() => { setLearningIndex((index) => index - 1); setLearningReveal(false) }}><ArrowLeft size={13} />上一题</button><div>{masteryOrder.map((item) => <button key={item} className={`mastery-chip ${current.mastery === item ? 'selected' : ''}`} type="button" onClick={() => markLearning(item)}>{item}</button>)}</div><button className="primary-button" type="button" onClick={() => { if (learningIndex < learningQuestions.length - 1) { setLearningIndex((index) => index + 1); setLearningReveal(false) } else setActiveNav('library') }}>下一题 <ArrowRight size={13} /></button></div></div>
+      <header className="page-header learning-header"><div><p className="eyebrow">Interview workspace / 02</p><h1>学习</h1><p className="page-description">按分类、难度和掌握程度选择内容，答完再看解析。</p></div><div className="learning-progress"><strong>{current ? learningIndex + 1 : 0}</strong><span>/ {learningQuestions.length} 道</span></div></header>
+      <section className="learning-statistics" aria-label="学习统计">
+        <div className="learning-stat-cards"><div><span>今日学习</span><strong>{stats.todayLearned}</strong><small>道题（按题目去重）</small></div><div><span>题库总数</span><strong>{stats.totalQuestions}</strong><small>道题目</small></div><div><span>已掌握</span><strong>{stats.mastery.掌握}</strong><small>{Math.round((stats.mastery.掌握 / masteryTotal) * 100)}% 的题目</small></div><div><span>当前筛选</span><strong>{learningQuestions.length}</strong><small>道待学习</small></div></div>
+        <div className="learning-stat-detail"><section><div className="learning-section-heading"><div><p className="section-label">全部掌握程度</p><span>题库当前状态分布</span></div></div><div className="mastery-distribution">{masteryOrder.map((item) => <div key={item} className="mastery-distribution-row"><span>{item}</span><div className="mastery-bar"><i data-level={item} style={{ width: `${Math.round((stats.mastery[item] / masteryTotal) * 100)}%` }} /></div><strong>{stats.mastery[item]}</strong></div>)}</div></section><section><div className="learning-section-heading"><div><p className="section-label">分类掌握程度</p><span>按分类查看已掌握与待复习</span></div></div><div className="category-mastery-list">{stats.categories.length ? stats.categories.map((item) => <div key={item.name} className="category-mastery-row"><div><strong>{item.name}</strong><span>{item.mastery.掌握} / {item.total} 已掌握</span></div><div className="mastery-bar"><i data-level="掌握" style={{ width: `${Math.round((item.mastery.掌握 / Math.max(item.total, 1)) * 100)}%` }} /></div></div>) : <p className="learning-empty-note">还没有题目分类。</p>}</div></section></div>
+      </section>
+      <section className="learning-filter-panel"><div><p className="section-label">学习设置</p><span>选择后会从符合条件的题目重新开始</span></div><div className="learning-filter-controls"><label><span>分类</span><select value={learningFilters.category} onChange={(event) => changeLearningFilters({ category: event.target.value })}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>难度</span><select value={learningFilters.difficulty} onChange={(event) => changeLearningFilters({ difficulty: event.target.value })}>{['全部难度', ...difficultyOrder].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>掌握程度</span><select value={learningFilters.mastery} onChange={(event) => changeLearningFilters({ mastery: event.target.value })}>{['未学习', '全部掌握度', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select></label><button className="quiet-button" type="button" onClick={() => changeLearningFilters(emptyLearningFilters)}>重置筛选</button></div></section>
+      {current ? <div className="learning-card"><div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div><h2>{current.title}</h2><div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div><div className="learning-answer">{learningReveal ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.interviewAnswer}</ReactMarkdown></div> : <button className="reveal-button" type="button" onClick={() => setLearningReveal(true)}>查看答案与解析 <ChevronDown size={14} /></button>}</div><div className="learning-actions"><button className="quiet-button" type="button" disabled={learningIndex === 0} onClick={() => { setLearningIndex((index) => index - 1); setLearningReveal(false) }}><ArrowLeft size={13} />上一题</button><div>{masteryOrder.map((item) => <button key={item} className={`mastery-chip ${current.mastery === item ? 'selected' : ''}`} type="button" onClick={() => markLearning(item)}>{item}</button>)}</div><button className="primary-button" type="button" onClick={() => { if (learningIndex < learningQuestions.length - 1) { setLearningIndex((index) => index + 1); setLearningReveal(false) } else setActiveNav('library') }}>下一题 <ArrowRight size={13} /></button></div></div> : <div className="learning-empty-state"><Sparkles size={20} /><div><strong>当前筛选没有题目</strong><p>可以切换分类、难度或掌握程度，继续安排学习。</p></div><button className="primary-button" type="button" onClick={() => changeLearningFilters(emptyLearningFilters)}>查看未学习题目 <ArrowRight size={13} /></button></div>}
     </div>
   }
 
@@ -590,7 +665,7 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">IP</span><span>InterviewPrep</span></div>
       <div className="profile"><div className="avatar">穆</div><div><strong>穆兰</strong><span>准备中 · 前端 / AI</span></div><button className="icon-button" type="button" title="切换资料"><ChevronDown size={14} /></button></div>
-      <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && <span className="nav-badge">3</span>}</button> })}</nav>
+      <nav>{navItems.map((item) => { const Icon = item.icon; const learningTodoCount = questions.filter((question) => question.mastery !== '掌握').length; return <button key={item.id} className={activeNav === item.id ? 'active' : ''} type="button" onClick={() => setActiveNav(item.id)}><Icon className="nav-icon" size={17} aria-hidden="true" />{item.label}{item.id === 'learning' && learningTodoCount > 0 && <span className="nav-badge">{learningTodoCount}</span>}</button> })}</nav>
       <div className="sidebar-bottom"><button type="button" onClick={openProfile}><Settings size={15} />设置</button><div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '本地数据模式'}</div><div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div></div>
     </aside>
     <main className="main-content">

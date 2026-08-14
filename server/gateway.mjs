@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.mjs'
+import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getLearningStats, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, saveLearningProgress, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -570,6 +570,19 @@ async function handle(request, response) {
     } catch (error) {
       return jsonResponse(response, 400, { error: error.message || '学习 session 创建失败。' })
     }
+  }
+  if (request.method === 'POST' && request.url === '/api/learning-progress') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      if (!body.questionId || !['未学习', '了解', '熟悉', '掌握'].includes(body.mastery)) return jsonResponse(response, 400, { error: 'questionId 和合法的 mastery 必填。' })
+      const progress = saveLearningProgress(body.questionId, body.mastery, body.sessionId)
+      return progress ? jsonResponse(response, 201, { progress }) : jsonResponse(response, 404, { error: '题目不存在。' })
+    } catch (error) {
+      return jsonResponse(response, 400, { error: error.message || '学习记录保存失败。' })
+    }
+  }
+  if (request.method === 'GET' && request.url === '/api/learning/stats') {
+    return jsonResponse(response, 200, { stats: getLearningStats() })
   }
   if (request.method === 'POST' && request.url === '/api/practice-sessions') {
     try {
