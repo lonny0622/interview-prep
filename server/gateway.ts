@@ -1,7 +1,6 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { appConfig } from './config/env.js'
-import { readBody } from './http/body.js'
 import { jsonResponse } from './http/response.js'
 import { errorMessage } from './http/errors.js'
 import { handleProfileRoutes } from './routes/profile.routes.js'
@@ -39,19 +38,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     extractResumeText: (binary, fileName, mimeType) => extractResumeTextFile(binary, fileName, mimeType, rootDir),
     transcribeAudio: (audioBase64, mimeType) => transcribeAudioFile(audioBase64, mimeType, { baseUrl: sttBaseUrl, model: sttModel, apiKey: sttApiKey, ffmpegPath }),
   })) return
-  if (await handleProfileRoutes(request, response)) return
-  if (request.method === 'POST' && request.url === '/api/profile/parse') {
-    try {
-      const body = JSON.parse(await readBody(request, 1_500_000))
-      const resumeText = String(body.resumeText || '')
-      const jdText = String(body.jdText || '')
-      if (!resumeText.trim() && !jdText.trim()) return jsonResponse(response, 400, { error: 'resumeText 或 jdText 至少填写一项。' })
-      const profile = await parseStructuredProfile(resumeText, jdText, body.existing || {})
-      return jsonResponse(response, 200, { profile, fallback: !baseUrl || !model || !apiKey })
-    } catch (error) {
-      return jsonResponse(response, 400, { error: errorMessage(error, '资料解析失败。') })
-    }
-  }
+  if (await handleProfileRoutes(request, response, { parseStructuredProfile }, { llmConfigured: Boolean(baseUrl && model && apiKey) })) return
   if (await handleInterviewRoutes(request, response, { parseStructuredProfile, generateInterviewBlueprint, scoreAnswer, decideNextAction, generateInterviewReport })) return
   if (await handleStudyRoutes(request, response)) return
   if (await handleQuestionRoutes(request, response)) return

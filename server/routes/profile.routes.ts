@@ -4,15 +4,33 @@ import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { createJobProfile, createResume, deleteJobProfile, deleteResume, getProfile, listJobProfiles, updateJobProfile, updateProfile, updateResume } from '../db/repositories/profile.repository.js'
 
+type ProfileServices = {
+  parseStructuredProfile: (resumeText: string, jdText: string, existing: Record<string, any>) => Promise<any>
+}
+
+type ProfileRouteConfig = {
+  llmConfigured: boolean
+}
+
 const pathOf = (request: IncomingMessage) => request.url?.split('?')[0] || ''
 const is = (request: IncomingMessage, method: string, path: string | RegExp) => request.method === method && (typeof path === 'string' ? pathOf(request) === path : path.test(pathOf(request)))
 const idFrom = (request: IncomingMessage) => pathOf(request).split('/').pop() || ''
 
 /** 个人资料、岗位和简历的 HTTP 适配层。业务规则留在 profile repository。 */
-export async function handleProfileRoutes(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+export async function handleProfileRoutes(request: IncomingMessage, response: ServerResponse, services: ProfileServices, config: ProfileRouteConfig): Promise<boolean> {
   if (is(request, 'GET', '/api/profile')) { jsonResponse(response, 200, { profile: getProfile() }); return true }
   if (is(request, 'PATCH', '/api/profile')) {
     try { jsonResponse(response, 200, { profile: updateProfile(await readJson(request, 500_000)) }); return true } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '个人资料保存失败。') }); return true }
+  }
+  if (is(request, 'POST', '/api/profile/parse')) {
+    try {
+      const body = await readJson<{ resumeText?: string; jdText?: string; existing?: Record<string, any> }>(request, 1_500_000)
+      const resumeText = String(body.resumeText || '')
+      const jdText = String(body.jdText || '')
+      if (!resumeText.trim() && !jdText.trim()) { jsonResponse(response, 400, { error: 'resumeText 或 jdText 至少填写一项。' }); return true }
+      const profile = await services.parseStructuredProfile(resumeText, jdText, body.existing || {})
+      jsonResponse(response, 200, { profile, fallback: !config.llmConfigured }); return true
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '资料解析失败。') }); return true }
   }
   if (is(request, 'GET', '/api/profile/jobs')) { jsonResponse(response, 200, { jobs: listJobProfiles() }); return true }
   if (is(request, 'POST', '/api/profile/jobs')) {
