@@ -1,11 +1,4 @@
-import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-
-const dataPath = resolve(process.env.INTERVIEWPREP_DATA_DIR || resolve(dirname(new URL(import.meta.url).pathname), '..', 'data'), 'interviewprep.sqlite')
-mkdirSync(dirname(dataPath), { recursive: true })
-const database = new DatabaseSync(dataPath)
-database.exec('PRAGMA foreign_keys = ON;')
+import { database } from './db/connection.js'
 
 database.exec(`
   PRAGMA journal_mode = WAL;
@@ -114,20 +107,7 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS profile_migrations (
-    key TEXT PRIMARY KEY,
-    applied_at TEXT NOT NULL
-  );
 `)
-
-// Keep existing single-user databases forward compatible with the structured profile fields.
-for (const statement of [
-  "ALTER TABLE user_profile ADD COLUMN candidate_profile_json TEXT NOT NULL DEFAULT '{}'",
-  "ALTER TABLE user_profile ADD COLUMN parsed_at TEXT",
-  "ALTER TABLE user_profile ADD COLUMN resumes_json TEXT NOT NULL DEFAULT '[]'",
-]) {
-  try { database.exec(statement) } catch (error) { if (!String(error.message).includes('duplicate column')) throw error }
-}
 
 const now = () => new Date().toISOString()
 const parseJson = (value, fallback) => { try { return JSON.parse(value || '') } catch { return fallback } }
@@ -290,65 +270,6 @@ export function deleteResume(id) {
   if (current.is_default) { const replacement = database.prepare('SELECT id FROM resumes WHERE job_profile_id = ? ORDER BY created_at ASC LIMIT 1').get(current.job_profile_id); if (replacement) database.prepare('UPDATE resumes SET is_default = 1 WHERE id = ?').run(replacement.id) }
   return true
 }
-
-function migrateLegacyJobProfiles() {
-  if (database.prepare('SELECT COUNT(*) AS count FROM job_profiles').get().count > 0) return
-  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get())
-  if (!profile) return
-  const roles = profile.targetRoles.length ? profile.targetRoles : (profile.resumeText ? ['通用'] : [])
-  const legacyResumes = profile.resumes || []
-  const usedResumeIds = new Set()
-  const roleResume = new Map()
-  for (const resume of legacyResumes) {
-    const role = String(resume.role || '').trim()
-    if (role && !roleResume.has(role)) roleResume.set(role, resume)
-  }
-  const hasRoleSpecificResume = roles.some((title) => roleResume.has(title))
-  for (const [index, title] of roles.entries()) {
-    const job = createJobProfile(title)
-    let resume = roleResume.get(title)
-    if (!resume && !hasRoleSpecificResume && index === 0 && profile.resumeText) resume = { fileName: profile.resumeFileName, text: profile.resumeText, candidateProfile: profile.candidateProfile, parsedAt: profile.parsedAt }
-    if (resume?.id) {
-      if (usedResumeIds.has(resume.id)) resume = null
-      else usedResumeIds.add(resume.id)
-    }
-    if (job && resume?.text) createResume(job.id, resume)
-  }
-}
-
-migrateLegacyJobProfiles()
-
-// Repair the only ambiguous legacy case we can prove: identical file/content copied
-// to several jobs while the legacy record names the intended role.
-function repairLegacyResumeDuplicates() {
-  if (database.prepare('SELECT 1 FROM profile_migrations WHERE key = ?').get('legacy_resume_dedup')) return
-  const profile = toProfile(database.prepare('SELECT * FROM user_profile WHERE id = 1').get())
-  const roleByFingerprint = new Map()
-  for (const resume of profile?.resumes || []) {
-    if (!resume.role || !resume.text) continue
-    const fingerprint = `${resume.fileName}\n${resume.text}`
-    if (!roleByFingerprint.has(fingerprint)) roleByFingerprint.set(fingerprint, resume.role)
-  }
-  const rows = database.prepare(`SELECT resumes.id, resumes.file_name, resumes.text, job_profiles.title
-    FROM resumes JOIN job_profiles ON job_profiles.id = resumes.job_profile_id
-    WHERE job_profiles.profile_id = 1 ORDER BY resumes.created_at ASC`).all()
-  const groups = new Map()
-  for (const row of rows) {
-    const fingerprint = `${row.file_name}\n${row.text}`
-    if (!groups.has(fingerprint)) groups.set(fingerprint, [])
-    groups.get(fingerprint).push(row)
-  }
-  for (const [fingerprint, group] of groups) {
-    if (group.length < 2 || !roleByFingerprint.has(fingerprint)) continue
-    const intendedRole = roleByFingerprint.get(fingerprint)
-    const preferred = group.find((row) => row.title === intendedRole)
-    if (!preferred) continue
-    for (const duplicate of group) if (duplicate.id !== preferred.id) database.prepare('DELETE FROM resumes WHERE id = ?').run(duplicate.id)
-  }
-  database.prepare('INSERT OR IGNORE INTO profile_migrations (key, applied_at) VALUES (?, ?)').run('legacy_resume_dedup', now())
-}
-
-repairLegacyResumeDuplicates()
 
 export function updateProfile(patch) {
   const current = getProfile()

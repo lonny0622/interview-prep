@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "gateway": "node server/gateway.mjs",
-    "gateway:check": "node --check server/gateway.mjs",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "gateway": "pnpm gateway:build && node dist-server/gateway.js",
+    "gateway:build": "tsc -p tsconfig.server.json",
+    "gateway:check": "pnpm gateway:build",
+    "build": "tsc -b && pnpm gateway:build && vite build",
+    "lint": "oxlint && eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,6 +24,8 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
     "oxlint": "^1.75.0",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"

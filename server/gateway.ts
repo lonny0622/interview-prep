@@ -1,38 +1,14 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getLearningStats, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, saveLearningProgress, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.mjs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { appConfig } from './config/env.js'
+import { readBody, readJson } from './http/body.js'
+import { jsonResponse } from './http/response.js'
+import { completeChat } from './services/llm/client.js'
+import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getLearningStats, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, saveLearningProgress, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.js'
 
-const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-
-function loadEnvFile() {
-  const filePath = resolve(rootDir, '.env.local')
-  if (!existsSync(filePath)) return {}
-  return Object.fromEntries(readFileSync(filePath, 'utf8').split(/\r?\n/).flatMap((line) => {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) return []
-    const separator = trimmed.indexOf('=')
-    if (separator < 1) return []
-    return [[trimmed.slice(0, separator), trimmed.slice(separator + 1).replace(/^['"]|['"]$/g, '')]]
-  }))
-}
-
-const fileEnv = loadEnvFile()
-const env = (name, fallback = '') => process.env[name] || fileEnv[name] || fallback
-const provider = env('VITE_LLM_PROVIDER', 'openai-compatible')
-const baseUrl = env('VITE_LLM_BASE_URL').replace(/\/$/, '')
-const model = env('VITE_LLM_MODEL')
-const importModel = env('LLM_IMPORT_MODEL', model)
-const apiKey = env('LLM_API_KEY')
-const sttProvider = env('STT_PROVIDER')
-const sttBaseUrl = env('STT_BASE_URL').replace(/\/$/, '')
-const sttModel = env('STT_MODEL')
-const sttApiKey = env('STT_API_KEY')
-const ffmpegPath = env('STT_FFMPEG_PATH', 'ffmpeg')
-const port = Number(env('LLM_GATEWAY_PORT', '8787'))
-const requestTimeoutMs = Number(env('LLM_REQUEST_TIMEOUT_MS', '90000'))
+const { rootDir, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, port, requestTimeoutMs } = appConfig
 
 const questionSchema = '[{"title":"问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"答案","explanation":"解析","interviewAnswer":"建议回答","followUps":["追问"]}]'
 const enrichedQuestionSchema = '[{"title":"必须原样保留的问题","category":"分类","difficulty":"简单|中等|困难","importance":1,"answer":"Markdown 格式的正确答案","explanation":"Markdown 格式的详细解析，必须包含 ## 核心结论、## 详细解析、## 速记 三个小节","interviewAnswer":"不超过 120 字、适合面试现场直接说的回答","followUps":["发散问题 1","发散问题 2"]}]'
@@ -40,23 +16,6 @@ const scoreSchema = '{"score":0,"dimensions":{"correctness":0,"structure":0,"cla
 const interviewBlueprintSchema = '[{"stage":"self_introduction|project_experience|knowledge|scenario|follow_up|candidate_questions","kind":"自我介绍|简历项目题|八股题|场景题|发散追问|反问环节","question":"问题","focus":"考察点","referenceAnswer":"参考回答或评分要点","followUps":["追问"]}]'
 const nextActionSchema = '{"action":"follow_up|advance_stage|finish","reason":"判断依据","question":"追问问题，可为空","kind":"发散追问|进入下一阶段|结束","focus":"考察点","referenceAnswer":"评分要点"}'
 const profileSchema = '{"candidate":{"name":"","headline":"","yearsExperience":0,"skills":[""],"experiences":[{"company":"","title":"","period":"","responsibilities":[""]}],"projects":[{"name":"","background":"","responsibilities":[""],"techStack":[""],"challenges":[""],"solutions":[""],"results":[""],"risks":[""]}]},"job":{"role":"","responsibilities":[""],"requiredSkills":[""],"preferredExperience":[""],"interviewSignals":[""]},"gaps":[""]}'
-
-function jsonResponse(response, statusCode, payload) {
-  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
-  response.end(JSON.stringify(payload))
-}
-
-function readBody(request, limit = 1_000_000) {
-  return new Promise((resolveBody, reject) => {
-    let body = ''
-    request.on('data', (chunk) => {
-      body += chunk
-      if (body.length > limit) reject(new Error(`请求内容超过 ${Math.round(limit / 1_000_000)}MB 限制。`))
-    })
-    request.on('end', () => resolveBody(body))
-    request.on('error', reject)
-  })
-}
 
 function extractDocxText(binary) {
   const tempDir = mkdtempSync(join(rootDir, '.resume-'))
@@ -314,16 +273,7 @@ function normalizeQuestionOutline(value, category) {
 }
 
 async function callModel(source) {
-  if (!baseUrl || !model || !apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
-  let response
-  try {
-    response = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    signal: controller.signal,
-    body: JSON.stringify({
+  const content = await completeChat({
       model: importModel,
       temperature: 0.1,
       max_tokens: 1800,
@@ -331,18 +281,7 @@ async function callModel(source) {
         { role: 'system', content: `你是面试题库整理助手。只输出 JSON 数组，不要代码围栏。字段结构：${questionSchema}。缺失字段填空或默认值，保留事实，不编造经历。答案和解析保持简洁。` },
         { role: 'user', content: source },
       ],
-    }),
     })
-  } catch (error) {
-    if (error.name === 'AbortError') throw new Error(`模型请求超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已自动停止。`)
-    throw error
-  } finally {
-    clearTimeout(timeout)
-  }
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.error?.message || `上游模型请求失败（${response.status}）。`)
-  const content = payload.choices?.[0]?.message?.content
-  if (typeof content !== 'string') throw new Error('上游模型没有返回文本内容。')
   return normalizeDrafts(extractJson(content))
 }
 
@@ -516,7 +455,7 @@ async function handle(request, response) {
   if (request.method === 'GET' && request.url === '/api/categories') return jsonResponse(response, 200, { categories: listCategories() })
   if (request.method === 'POST' && request.url === '/api/categories') {
     try {
-      const body = JSON.parse(await readBody(request))
+      const body = await readJson<Record<string, any>>(request)
       return jsonResponse(response, 201, { category: createCategory(body.name) })
     } catch (error) {
       return jsonResponse(response, error.code === 'CATEGORY_EXISTS' ? 409 : 400, { error: error.message || '分类创建失败。' })

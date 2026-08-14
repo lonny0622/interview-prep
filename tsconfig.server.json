@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "rootDir": "server",
+    "outDir": "dist-server",
+    "sourceMap": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "noCheck": true
+  },
+  "include": ["server/**/*.ts"]
+}
