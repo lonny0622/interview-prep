@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
+import { matchesRoute, pathSegment } from '../http/routing.js'
 import { createInterviewSession, completeInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from '../db/repositories/interview.repository.js'
 import { listJobProfiles } from '../db/repositories/profile.repository.js'
 
@@ -13,13 +14,11 @@ type InterviewServices = {
   generateInterviewReport: (session: any, turns: any[]) => Promise<any>
 }
 
-const pathOf = (request: IncomingMessage) => request.url?.split('?')[0] || ''
-const is = (request: IncomingMessage, method: string, path: string | RegExp) => request.method === method && (typeof path === 'string' ? pathOf(request) === path : path.test(pathOf(request)))
-const sessionId = (request: IncomingMessage) => pathOf(request).split('/')[3] || ''
+const sessionId = (request: IncomingMessage) => pathSegment(request, 3)
 
 /** 模拟面试生命周期路由；模型编排通过 services 注入，避免 HTTP 层依赖 gateway 内部实现。 */
 export async function handleInterviewRoutes(request: IncomingMessage, response: ServerResponse, services: InterviewServices): Promise<boolean> {
-  if (is(request, 'POST', '/api/interview-sessions')) {
+  if (matchesRoute(request, 'POST', '/api/interview-sessions')) {
     try {
       const body = await readJson<{ profile?: any }>(request, 2_000_000)
       if (!body.profile || typeof body.profile !== 'object') { jsonResponse(response, 400, { error: 'profile 必须是对象。' }); return true }
@@ -41,14 +40,14 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       jsonResponse(response, 201, { session: createInterviewSession(profile, blueprint) }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '模拟面试创建失败。') }); return true }
   }
-  if (is(request, 'GET', '/api/interview-sessions')) { jsonResponse(response, 200, { sessions: listInterviewSessions() }); return true }
-  if (is(request, 'GET', /^\/api\/interview-sessions\/[^/]+$/)) {
+  if (matchesRoute(request, 'GET', '/api/interview-sessions')) { jsonResponse(response, 200, { sessions: listInterviewSessions() }); return true }
+  if (matchesRoute(request, 'GET', /^\/api\/interview-sessions\/[^/]+$/)) {
     const id = sessionId(request)
     const session = getInterviewSession(id)
     if (!session) { jsonResponse(response, 404, { error: '模拟面试不存在。' }); return true }
     jsonResponse(response, 200, { session, turns: listInterviewTurns(id) }); return true
   }
-  if (is(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/turns$/)) {
+  if (matchesRoute(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/turns$/)) {
     try {
       const id = sessionId(request)
       const body = await readJson<any>(request, 2_000_000)
@@ -58,7 +57,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       jsonResponse(response, 201, { turn: saveInterviewTurn(id, { stage: body.stage || 'knowledge', question: body.question, answerText: body.answerText }, score) }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '面试回答保存失败。') }); return true }
   }
-  if (is(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/next-action$/)) {
+  if (matchesRoute(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/next-action$/)) {
     try {
       const id = sessionId(request)
       const session = getInterviewSession(id)
@@ -72,7 +71,7 @@ export async function handleInterviewRoutes(request: IncomingMessage, response: 
       jsonResponse(response, 200, { action, session: nextSession }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '下一步面试动作生成失败。') }); return true }
   }
-  if (is(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/complete$/)) {
+  if (matchesRoute(request, 'POST', /^\/api\/interview-sessions\/[^/]+\/complete$/)) {
     try {
       const id = sessionId(request)
       const session = getInterviewSession(id)
