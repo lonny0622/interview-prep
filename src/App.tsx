@@ -600,7 +600,7 @@ function App() {
   }
 
   const renderLibrary = () => (
-    <>
+    <div className="library-page">
       <header className="page-header">
         <div>
           <p className="eyebrow">Interview workspace / 01</p>
@@ -643,7 +643,7 @@ function App() {
           </> : <div className="empty-state">从左侧选择一道题目开始</div>}
         </section>
       </div>
-    </>
+    </div>
   )
 
   const renderLearning = () => {

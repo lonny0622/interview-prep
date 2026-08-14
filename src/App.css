@@ -76,5 +76,16 @@ body { overflow: hidden; }
   .sidebar { height: 62px; max-height: 62px; overflow: hidden; }
   .main-content { height: calc(100vh - 62px); overflow-y: auto; }
 }
+
+.library-page { display: flex; flex-direction: column; min-height: 100%; }
+.library-page > .library-layout { flex: 1 1 auto; height: auto; min-height: 0; margin-bottom: 24px; }
+@media (min-width: 851px) {
+  .library-page { height: 100%; min-height: 0; overflow: hidden; }
+  .library-page > .library-layout { grid-template-rows: minmax(0, 1fr); }
+}
+@media (max-width: 850px) {
+  .library-page { min-height: auto; }
+  .library-page > .library-layout { flex: 0 0 auto; height: auto; min-height: 0; margin-bottom: 24px; }
+}
 .import-category-row, .import-create-category, .category-create-row, .category-row, .category-row-actions { display: flex; align-items: center; gap: 8px; }.import-category-row select, .import-create-category input, .category-create-row input, .category-row input { flex: 1; min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--ink); padding: 10px 11px; font-size: 12px; }.import-category-row select:focus, .import-create-category input:focus, .category-create-row input:focus, .category-row input:focus { border-color: #8dafed; outline: none; box-shadow: 0 0 0 3px #edf3ff; }.import-create-category { margin-top: 8px; }.import-create-category .quiet-button { white-space: nowrap; }.category-manager-modal { width: min(620px, 100%); }.category-manager-body { display: grid; gap: 14px; padding: 24px 28px 18px; }.category-create-row .primary-button { white-space: nowrap; }.category-manager-error { padding: 0; margin: -4px 0 0; }.category-list { display: grid; gap: 7px; max-height: min(430px, calc(100vh - 300px)); overflow: auto; }.category-row { justify-content: space-between; min-height: 52px; padding: 9px 0; border-bottom: 1px solid #eef0f3; }.category-row > div:first-child { display: grid; gap: 4px; min-width: 0; }.category-row strong { color: var(--ink); font-size: 12px; }.category-row span { color: var(--muted); font-size: 10px; }.category-row-actions { flex: 0 0 auto; }.category-manager-hint { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 @media (max-width: 560px) { .import-category-row, .category-create-row { align-items: stretch; flex-direction: column; }.import-category-row button, .category-create-row button { align-self: flex-start; } }
