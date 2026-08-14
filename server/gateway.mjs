@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
-import { completeInterviewSession, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateJobProfile, updateResume, updateProfile } from './db.mjs'
+import { completeInterviewSession, createCategory, createInterviewSession, createQuestions, createJobProfile, createLearningSession, createPracticeSession, createResume, deleteCategory, deleteJobProfile, deleteResume, editQuestion, getInterviewSession, getProfile, insertInterviewFollowUp, listCategories, listInterviewSessions, listInterviewTurns, listJobProfiles, listQuestions, removeQuestion, saveInterviewTurn, savePracticeAnswer, updateCategory, updateJobProfile, updateResume, updateProfile } from './db.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -512,6 +512,33 @@ async function handle(request, response) {
   if (request.method === 'GET' && request.url.startsWith('/api/questions')) {
     const url = new URL(request.url, 'http://127.0.0.1')
     return jsonResponse(response, 200, { questions: listQuestions({ q: url.searchParams.get('q') || '', category: url.searchParams.get('category') || '', difficulty: url.searchParams.get('difficulty') || '', mastery: url.searchParams.get('mastery') || '' }) })
+  }
+  if (request.method === 'GET' && request.url === '/api/categories') return jsonResponse(response, 200, { categories: listCategories() })
+  if (request.method === 'POST' && request.url === '/api/categories') {
+    try {
+      const body = JSON.parse(await readBody(request))
+      return jsonResponse(response, 201, { category: createCategory(body.name) })
+    } catch (error) {
+      return jsonResponse(response, error.code === 'CATEGORY_EXISTS' ? 409 : 400, { error: error.message || '分类创建失败。' })
+    }
+  }
+  if (request.method === 'PATCH' && request.url.match(/^\/api\/categories\/[^/]+$/)) {
+    try {
+      const id = request.url.split('/').pop()
+      const body = JSON.parse(await readBody(request))
+      const category = updateCategory(id, body.name)
+      return category ? jsonResponse(response, 200, { category }) : jsonResponse(response, 404, { error: '分类不存在。' })
+    } catch (error) {
+      return jsonResponse(response, error.code === 'CATEGORY_EXISTS' ? 409 : 400, { error: error.message || '分类更新失败。' })
+    }
+  }
+  if (request.method === 'DELETE' && request.url.match(/^\/api\/categories\/[^/]+$/)) {
+    try {
+      const id = request.url.split('/').pop()
+      return deleteCategory(id) ? jsonResponse(response, 204, {}) : jsonResponse(response, 404, { error: '分类不存在。' })
+    } catch (error) {
+      return jsonResponse(response, error.code === 'CATEGORY_IN_USE' ? 409 : 400, { error: error.message || '分类删除失败。' })
+    }
   }
   if (request.method === 'POST' && request.url === '/api/questions') {
     try {

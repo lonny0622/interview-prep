@@ -23,6 +23,13 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS question_categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS learning_sessions (
     id TEXT PRIMARY KEY,
     question_ids TEXT NOT NULL,
@@ -117,6 +124,8 @@ for (const statement of [
 
 const now = () => new Date().toISOString()
 const parseJson = (value, fallback) => { try { return JSON.parse(value || '') } catch { return fallback } }
+const normalizeCategoryName = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, 80)
+const toCategory = (row) => ({ id: row.id, name: row.name, sortOrder: row.sort_order, questionCount: Number(row.question_count || 0), createdAt: row.created_at, updatedAt: row.updated_at })
 const toResume = (row) => ({ id: row.id, jobProfileId: row.job_profile_id, fileName: row.file_name, text: row.text, candidateProfile: parseJson(row.candidate_profile_json, null), parsedAt: row.parsed_at || null, isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at })
 const toJobProfile = (row) => ({ id: row.id, title: row.title, sortOrder: row.sort_order, isDefault: Boolean(row.is_default), resumes: [] })
 const toProfile = (row) => {
@@ -139,6 +148,68 @@ const toQuestion = (row) => ({
 
 const insertQuestion = database.prepare(`INSERT INTO questions (id, title, category, difficulty, importance, mastery, answer, explanation, interview_answer, follow_ups, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 const updateQuestion = database.prepare(`UPDATE questions SET title = ?, category = ?, difficulty = ?, importance = ?, mastery = ?, answer = ?, explanation = ?, interview_answer = ?, follow_ups = ?, updated_at = ? WHERE id = ?`)
+const findCategoryByName = database.prepare('SELECT * FROM question_categories WHERE name = ? COLLATE NOCASE')
+const findCategoryById = database.prepare('SELECT * FROM question_categories WHERE id = ?')
+const insertCategory = database.prepare('INSERT INTO question_categories (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+
+function ensureCategory(name) {
+  const normalized = normalizeCategoryName(name) || '未分类'
+  const existing = findCategoryByName.get(normalized)
+  if (existing) return existing
+  const timestamp = now()
+  const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM question_categories').get().next
+  const id = crypto.randomUUID()
+  insertCategory.run(id, normalized, sortOrder, timestamp, timestamp)
+  return findCategoryById.get(id)
+}
+
+// Backfill categories for databases created before category management existed.
+for (const row of database.prepare("SELECT DISTINCT TRIM(category) AS name FROM questions WHERE TRIM(category) <> ''").all()) ensureCategory(row.name)
+
+export function listCategories() {
+  return database.prepare(`SELECT c.*, COUNT(q.id) AS question_count
+    FROM question_categories c
+    LEFT JOIN questions q ON q.category = c.name COLLATE NOCASE
+    GROUP BY c.id
+    ORDER BY c.sort_order ASC, c.name COLLATE NOCASE ASC`).all().map(toCategory)
+}
+
+export function createCategory(name) {
+  const normalized = normalizeCategoryName(name)
+  if (!normalized) throw new Error('分类名称不能为空。')
+  if (findCategoryByName.get(normalized)) { const error = new Error('分类已存在。'); error.code = 'CATEGORY_EXISTS'; throw error }
+  const category = ensureCategory(normalized)
+  return toCategory({ ...category, question_count: 0 })
+}
+
+export function updateCategory(id, name) {
+  const current = findCategoryById.get(id)
+  if (!current) return null
+  const normalized = normalizeCategoryName(name)
+  if (!normalized) throw new Error('分类名称不能为空。')
+  const duplicate = findCategoryByName.get(normalized)
+  if (duplicate && duplicate.id !== id) { const error = new Error('分类已存在。'); error.code = 'CATEGORY_EXISTS'; throw error }
+  if (normalized === current.name) return listCategories().find((item) => item.id === id)
+  const timestamp = now()
+  database.exec('BEGIN')
+  try {
+    database.prepare('UPDATE question_categories SET name = ?, updated_at = ? WHERE id = ?').run(normalized, timestamp, id)
+    database.prepare('UPDATE questions SET category = ?, updated_at = ? WHERE category = ? COLLATE NOCASE').run(normalized, timestamp, current.name)
+    database.exec('COMMIT')
+  } catch (error) {
+    database.exec('ROLLBACK')
+    throw error
+  }
+  return listCategories().find((item) => item.id === id)
+}
+
+export function deleteCategory(id) {
+  const current = findCategoryById.get(id)
+  if (!current) return false
+  const count = database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name).count
+  if (count > 0) { const error = new Error(`分类下还有 ${count} 道题目，不能删除。`); error.code = 'CATEGORY_IN_USE'; throw error }
+  return database.prepare('DELETE FROM question_categories WHERE id = ?').run(id).changes > 0
+}
 
 export function listQuestions(filters = {}) {
   const clauses = []
@@ -292,10 +363,11 @@ export function getQuestion(id) {
 export function createQuestions(drafts) {
   const timestamp = now()
   const created = []
+  for (const draft of drafts) ensureCategory(draft.category)
   database.exec('BEGIN')
   try {
     for (const draft of drafts) {
-      const question = { id: crypto.randomUUID(), mastery: '未学习', ...draft }
+      const question = { id: crypto.randomUUID(), mastery: '未学习', ...draft, category: normalizeCategoryName(draft.category) || '未分类' }
       insertQuestion.run(question.id, question.title, question.category, question.difficulty, question.importance, question.mastery, question.answer, question.explanation, question.interviewAnswer, JSON.stringify(question.followUps), timestamp, timestamp)
       created.push(question)
     }
@@ -310,7 +382,8 @@ export function createQuestions(drafts) {
 export function editQuestion(id, patch) {
   const current = getQuestion(id)
   if (!current) return null
-  const next = { ...current, ...patch, id }
+  const next = { ...current, ...patch, id, category: normalizeCategoryName(patch.category ?? current.category) || '未分类' }
+  ensureCategory(next.category)
   updateQuestion.run(next.title, next.category, next.difficulty, next.importance, next.mastery, next.answer, next.explanation, next.interviewAnswer, JSON.stringify(next.followUps), now(), id)
   return getQuestion(id)
 }

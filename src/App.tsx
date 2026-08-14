@@ -8,6 +8,8 @@ import type { UserProfile, JobProfile } from './types/profile'
 import type { InterviewSetup as InterviewSetupState } from './types/interview'
 import { ProfileCenter } from './components/profile/ProfileCenter'
 import { InterviewSetup } from './components/interview/InterviewSetup'
+import { CategoryManagerModal } from './components/questions/CategoryManagerModal'
+import type { QuestionCategory } from './components/questions/CategoryManagerModal'
 import { QuestionImportModal } from './components/questions/QuestionImportModal'
 import type { QuestionImporterState } from './components/questions/QuestionImportModal'
 import { parseQuestionOutline } from './features/questionImport'
@@ -156,6 +158,8 @@ function App() {
   const [profile, setProfile] = useState<UserProfile>({ id: 1, name: '', headline: '', yearsExperience: 0, targetRoles: [], resumeText: '', resumeFileName: '', resumes: [], candidateProfile: null, parsedAt: null })
   const [profileOpen, setProfileOpen] = useState(false)
   const [jobs, setJobs] = useState<JobProfile[]>([])
+  const [categoryCatalog, setCategoryCatalog] = useState<QuestionCategory[]>([])
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
   const interviewRecorderRef = useRef<MediaRecorder | null>(null)
   const interviewChunksRef = useRef<Blob[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -179,6 +183,13 @@ function App() {
   }, [])
 
   useEffect(() => {
+    fetch('/api/categories')
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('分类服务不可用')))
+      .then((payload: { categories: QuestionCategory[] }) => { if (Array.isArray(payload.categories)) setCategoryCatalog(payload.categories) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
     profileApi.get().then((payload) => { setProfile(payload.profile); setJobs(payload.profile.jobs || []) }).catch(() => {})
   }, [])
 
@@ -192,7 +203,7 @@ function App() {
 
 
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
-  const categories = ['全部分类', ...new Set(questions.map((question) => question.category))]
+  const categories = ['全部分类', ...new Set([...categoryCatalog.map((item) => item.name), ...questions.map((question) => question.category)])]
   const filteredQuestions = useMemo(
     () => questions.filter((question) => {
       const haystack = [question.title, question.category, question.answer, question.explanation, question.interviewAnswer, ...question.followUps].join('\n').toLowerCase()
@@ -217,14 +228,47 @@ function App() {
     } : { mode: 'create', draft: emptyDraft })
   }
 
+  const createCategory = async (name: string) => {
+    const response = await fetch('/api/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || !payload.category) throw new Error(payload.error || '分类创建失败。')
+    setCategoryCatalog((current) => [...current, payload.category].sort((a: QuestionCategory, b: QuestionCategory) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN')))
+    return payload.category.name as string
+  }
+
+  const renameCategory = async (categoryToRename: QuestionCategory, name: string) => {
+    const response = await fetch(`/api/categories/${categoryToRename.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || !payload.category) throw new Error(payload.error || '分类更新失败。')
+    setCategoryCatalog((current) => current.map((item) => item.id === categoryToRename.id ? payload.category : item))
+    setQuestions((current) => current.map((question) => question.category.toLocaleLowerCase() === categoryToRename.name.toLocaleLowerCase() ? { ...question, category: payload.category.name } : question))
+    setCategory((current) => current === categoryToRename.name ? payload.category.name : current)
+  }
+
+  const deleteCategory = async (categoryToDelete: QuestionCategory) => {
+    const response = await fetch(`/api/categories/${categoryToDelete.id}`, { method: 'DELETE' })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error || '分类删除失败。')
+    setCategoryCatalog((current) => current.filter((item) => item.id !== categoryToDelete.id))
+    setCategory((current) => current === categoryToDelete.name ? '全部分类' : current)
+  }
+
+  const registerCategoryLocally = (name: string) => {
+    const normalized = name.trim()
+    if (!normalized) return
+    setCategoryCatalog((current) => current.some((item) => item.name === normalized) ? current : [...current, { id: `local-${normalized}`, name: normalized, sortOrder: current.length, questionCount: 0 }])
+  }
+
   const saveQuestion = () => {
     if (!editor || !editor.draft.title.trim() || !editor.draft.category.trim()) return
     if (editor.mode === 'edit') {
       setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, ...editor.draft } : question))
+      registerCategoryLocally(editor.draft.category)
       if (serverReady) fetch(`/api/questions/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editor.draft) }).catch(() => setServerReady(false))
     } else {
       const nextQuestion: Question = { ...editor.draft, id: crypto.randomUUID(), mastery: '未学习' }
       setQuestions((current) => [nextQuestion, ...current])
+      registerCategoryLocally(editor.draft.category)
       setSelectedId(nextQuestion.id)
       if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: [editor.draft] }) }).then(async (response) => { if (!response.ok) throw new Error('题目保存失败'); const payload = await response.json(); if (payload.questions?.[0]) setQuestions((current) => [payload.questions[0], ...current.filter((item) => item.id !== nextQuestion.id)]) }).catch(() => setServerReady(false))
     }
@@ -288,8 +332,13 @@ function App() {
     }
     const imported = importer.drafts.map((draft) => ({ ...draft, id: crypto.randomUUID(), mastery: '未学习' as Mastery }))
     setQuestions((current) => [...imported, ...current])
+    setCategoryCatalog((current) => {
+      const known = new Set(current.map((item) => item.name))
+      const additions = Array.from(new Set(imported.map((item) => item.category).filter((item) => item && !known.has(item)))).map((name, index) => ({ id: `local-${name}`, name, sortOrder: current.length + index, questionCount: 0 }))
+      return [...current, ...additions]
+    })
     setSelectedId(imported[0].id)
-    if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: importer.drafts }) }).then(async (response) => { if (!response.ok) throw new Error('批量保存失败'); const payload = await response.json(); setQuestions((current) => [...(payload.questions || []), ...current.filter((item) => !imported.some((created) => created.id === item.id))]) }).catch(() => setServerReady(false))
+    if (serverReady) fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: importer.drafts }) }).then(async (response) => { if (!response.ok) throw new Error('批量保存失败'); const payload = await response.json(); setQuestions((current) => [...(payload.questions || []), ...current.filter((item) => !imported.some((created) => created.id === item.id))]); const counts = new Map<string, number>(); (payload.questions || []).forEach((question: Question) => counts.set(question.category, (counts.get(question.category) || 0) + 1)); setCategoryCatalog((current) => current.map((item) => counts.has(item.name) ? { ...item, questionCount: item.questionCount + (counts.get(item.name) || 0) } : item)) }).catch(() => setServerReady(false))
     setImporter(null)
   }
 
@@ -504,7 +553,7 @@ function App() {
         <select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select>
         <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>{['全部难度', '简单', '中等', '困难'].map((item) => <option key={item}>{item}</option>)}</select>
         <select value={mastery} onChange={(event) => setMastery(event.target.value)}>{['全部掌握度', '未学习', '了解', '熟悉', '掌握'].map((item) => <option key={item}>{item}</option>)}</select>
-        <button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}><Upload size={13} />批量导入</button>
+        <button className="quiet-button" type="button" onClick={() => setCategoryManagerOpen(true)}><Settings size={13} />管理分类</button><button className="quiet-button" type="button" onClick={() => setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}><Upload size={13} />批量导入</button>
       </div>
       <div className="library-layout">
         <section className="question-list" aria-label="面试题列表">
@@ -548,6 +597,7 @@ function App() {
       {activeNav === 'library' ? renderLibrary() : activeNav === 'learning' ? renderLearning() : activeNav === 'practice' ? renderPractice() : renderInterview()}
     </main>
     {profileOpen && <ProfileCenter profile={profile} jobs={jobs} onProfileChange={setProfile} onJobsChange={setJobs} onClose={() => setProfileOpen(false)} />}
+    {categoryManagerOpen && <CategoryManagerModal categories={categoryCatalog} onClose={() => setCategoryManagerOpen(false)} onCreate={async (name) => { await createCategory(name) }} onRename={renameCategory} onDelete={deleteCategory} />}
     {editor && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditor(null) }}>
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="modal-header"><div><p className="eyebrow">Question editor</p><h2 id="editor-title">{editor.mode === 'create' ? '新建题目' : '编辑题目'}</h2></div><button className="icon-button" type="button" title="关闭" onClick={() => setEditor(null)}><X size={18} /></button></div>
@@ -564,7 +614,7 @@ function App() {
         <div className="modal-actions"><button className="quiet-button" type="button" onClick={() => setEditor(null)}>取消</button><button className="primary-button" type="button" disabled={!editor.draft.title.trim() || !editor.draft.category.trim()} onClick={saveQuestion}>保存题目</button></div>
       </section>
     </div>}
-    {importer && <QuestionImportModal state={importer} onChange={(next) => setImporter(next)} onClose={() => setImporter(null)} onLocalParse={importPreview} onGenerate={() => void importWithAi()} onConfirm={confirmImport} />}
+    {importer && <QuestionImportModal state={importer} categories={categories.filter((item) => item !== '全部分类')} onChange={(next) => setImporter(next)} onClose={() => setImporter(null)} onCreateCategory={createCategory} onLocalParse={importPreview} onGenerate={() => void importWithAi()} onConfirm={confirmImport} />}
   </div>
 }
 
