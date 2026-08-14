@@ -24,8 +24,8 @@ export function getLearningStats() {
   for (const row of database.prepare('SELECT mastery, COUNT(*) AS count FROM questions GROUP BY mastery').all() as any[]) mastery[row.mastery] = Number(row.count)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
-  const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(startOfToday.toISOString()).count)
-  const totalQuestions = Number(database.prepare('SELECT COUNT(*) AS count FROM questions').get().count)
+  const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(startOfToday.toISOString())?.count ?? 0)
+  const totalQuestions = Number(database.prepare('SELECT COUNT(*) AS count FROM questions').get()?.count ?? 0)
   const categories = database.prepare(`SELECT category, mastery, COUNT(*) AS count FROM questions GROUP BY category, mastery ORDER BY category COLLATE NOCASE ASC`).all() as any[]
   const categoryMap = new Map<string, any>()
   for (const row of categories) {

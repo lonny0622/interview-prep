@@ -36,7 +36,7 @@ function ensureCategory(name: unknown): any {
   const existing = findCategoryByName.get(normalized)
   if (existing) return existing
   const timestamp = now()
-  const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM question_categories').get().next
+  const sortOrder = Number(database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM question_categories').get()?.next ?? 0)
   const id = crypto.randomUUID()
   insertCategory.run(id, normalized, sortOrder, timestamp, timestamp)
   return findCategoryById.get(id)
@@ -90,7 +90,7 @@ export function updateCategory(id: string, name: unknown) {
 export function deleteCategory(id: string) {
   const current = findCategoryById.get(id)
   if (!current) return false
-  const count = Number(database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name).count)
+  const count = Number(database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name)?.count ?? 0)
   if (count > 0) {
     const error = new Error(`分类下还有 ${count} 道题目，不能删除。`) as Error & { code?: string }
     error.code = 'CATEGORY_IN_USE'
