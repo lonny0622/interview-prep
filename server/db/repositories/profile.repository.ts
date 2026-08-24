@@ -1,3 +1,4 @@
+import '../schema.js'
 import { database } from '../connection.js'
 import type { CreateResumeInput, JobProfile, JobProfilePatch, ResumePatch, ResumeProfile, StructuredProfile, UserProfile, UserProfilePatch } from '../../domain/profile.js'
 

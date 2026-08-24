@@ -36,4 +36,15 @@ export type QuestionImporterState = {
   drafts: QuestionDraft[]
   error: string
   processing: boolean
+  progress?: { completed: number; total: number; status?: string; retrying?: boolean }
+}
+
+export type QuestionRegeneratorState = {
+  questions: Question[]
+  drafts: QuestionDraft[]
+  scopeLabel: string
+  processing: boolean
+  saving: boolean
+  error: string
+  progress: { completed: number; total: number; status?: string; retrying?: boolean }
 }

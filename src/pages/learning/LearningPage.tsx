@@ -17,9 +17,10 @@ type Props = {
   onPrevious: () => void
   onNext: () => void
   onMarkMastery: (mastery: Mastery) => void
+  onQuestionContextMenu: (event: React.MouseEvent<HTMLElement>, question: Question) => void
 }
 
-export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery }: Props) {
+export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery, onQuestionContextMenu }: Props) {
   const current = questions[index]
   const masteryTotal = Math.max(stats.totalQuestions, 1)
 
@@ -55,7 +56,7 @@ export function LearningPage({ questions, index, revealAnswer, stats, filters, c
         <button className="quiet-button" type="button" onClick={() => onFiltersChange(EMPTY_LEARNING_FILTERS)}>重置筛选</button>
       </div>
     </section>
-    {current ? <div className="learning-card">
+    {current ? <div className="learning-card" onContextMenu={(event) => onQuestionContextMenu(event, current)}>
       <div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div>
       <h2>{current.title}</h2>
       <div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div>

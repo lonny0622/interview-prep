@@ -2,6 +2,7 @@ import type { Difficulty, Mastery, Question, QuestionDraft } from '../types/ques
 import type { LearningFilters } from '../types/study'
 
 export const QUESTION_STORAGE_KEY = 'interview-prep.questions.v1'
+export const QUESTION_IMPORT_STORAGE_KEY = 'interview-prep.question-import.v1'
 
 export const MASTERY_ORDER: Mastery[] = ['未学习', '了解', '熟悉', '掌握']
 export const DIFFICULTY_ORDER: Difficulty[] = ['简单', '中等', '困难']

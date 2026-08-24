@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite",
+    "auth:hash": "node scripts/hash-password.mjs",
+    "start": "node dist-server/gateway.js",
     "gateway": "pnpm gateway:build && node dist-server/gateway.js",
     "gateway:build": "tsc -p tsconfig.server.json",
     "gateway:check": "pnpm gateway:build",

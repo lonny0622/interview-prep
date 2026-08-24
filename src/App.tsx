@@ -1,15 +1,18 @@
 import { useState } from 'react'
 import './App.css'
+import { SelectionExplainDialog } from './components/ai/SelectionExplainDialog'
 import { AppSidebar } from './components/layout/AppSidebar'
 import { ProfileCenter } from './components/profile/ProfileCenter'
 import { CategoryManagerModal } from './components/questions/CategoryManagerModal'
 import { QuestionEditorModal } from './components/questions/QuestionEditorModal'
 import { QuestionImportModal } from './components/questions/QuestionImportModal'
+import { QuestionRegenerateModal } from './components/questions/QuestionRegenerateModal'
 import { useInterviewSession } from './features/interview/useInterviewSession'
 import { usePracticeSession } from './features/practice/usePracticeSession'
 import { useProfileData } from './features/profile/useProfileData'
 import { useQuestionLibrary } from './features/questions/useQuestionLibrary'
 import { useLearningSession } from './features/study/useLearningSession'
+import { useSelectionExplain } from './features/ai/useSelectionExplain'
 import { InterviewPage } from './pages/interview/InterviewPage'
 import { LearningPage } from './pages/learning/LearningPage'
 import { LibraryPage } from './pages/library/LibraryPage'
@@ -29,6 +32,7 @@ function App() {
   })
   const practice = usePracticeSession(library.questions)
   const interview = useInterviewSession()
+  const selectionExplain = useSelectionExplain()
 
   const renderPage = () => {
     if (activePage === 'library') return <LibraryPage
@@ -52,6 +56,8 @@ function App() {
       onCreateQuestion={() => library.openEditor()}
       onEditQuestion={library.openEditor}
       onDeleteQuestion={library.deleteQuestion}
+      onRegenerateQuestion={library.regenerateSingleQuestion}
+      onQuestionContextMenu={selectionExplain.openFromContextMenu}
       onManageCategories={() => library.setCategoryManagerOpen(true)}
       onImportQuestions={() => library.setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}
       onStartPractice={() => setActivePage('practice')}
@@ -69,6 +75,7 @@ function App() {
       onPrevious={learning.previous}
       onNext={() => learning.index < learning.questions.length - 1 ? learning.next() : setActivePage('library')}
       onMarkMastery={(mastery) => void learning.markMastery(mastery)}
+      onQuestionContextMenu={selectionExplain.openFromContextMenu}
     />
 
     if (activePage === 'practice') return <PracticePage
@@ -106,14 +113,19 @@ function App() {
       activePage={activePage}
       learningTodoCount={library.questions.filter((question) => question.mastery !== '掌握').length}
       serverReady={library.serverReady}
+      aiHistoryCount={selectionExplain.sessions.length}
+      aiHistoryOpen={selectionExplain.open && selectionExplain.historyOpen}
       onNavigate={setActivePage}
+      onOpenAiHistory={selectionExplain.openHistory}
       onOpenProfile={() => profile.setOpen(true)}
     />
     <main className="main-content">{renderPage()}</main>
     {profile.open && <ProfileCenter profile={profile.profile} jobs={profile.jobs} onProfileChange={profile.setProfile} onJobsChange={profile.setJobs} onClose={() => profile.setOpen(false)} />}
-    {library.categoryManagerOpen && <CategoryManagerModal categories={library.categoryCatalog} onClose={() => library.setCategoryManagerOpen(false)} onCreate={async (name) => { await library.createCategory(name) }} onRename={library.renameCategory} onDelete={library.deleteCategory} />}
+    {library.categoryManagerOpen && <CategoryManagerModal categories={library.categoryCatalog} onClose={() => library.setCategoryManagerOpen(false)} onCreate={async (name) => { await library.createCategory(name) }} onRename={library.renameCategory} onDelete={library.deleteCategory} onMoveQuestions={library.moveCategoryQuestions} onRegenerate={library.regenerateCategory} />}
     {library.editor && <QuestionEditorModal editor={library.editor} onChange={library.setEditor} onClose={() => library.setEditor(null)} onSave={library.saveQuestion} />}
-    {library.importer && <QuestionImportModal state={library.importer} categories={library.categories.filter((item) => item !== '全部分类')} onChange={library.setImporter} onClose={() => library.setImporter(null)} onCreateCategory={library.createCategory} onLocalParse={library.importPreview} onGenerate={() => void library.importWithAi()} onConfirm={library.confirmImport} />}
+    {library.importer && <QuestionImportModal state={library.importer} categories={library.categories.filter((item) => item !== '全部分类')} onChange={library.setImporter} onClose={library.closeImporter} onCreateCategory={library.createCategory} onLocalParse={library.importPreview} onGenerate={() => void library.importWithAi()} onConfirm={library.confirmImport} />}
+    {library.regenerator && <QuestionRegenerateModal state={library.regenerator} onChange={library.setRegenerator} onClose={library.closeRegenerator} onContinue={library.continueRegeneration} onConfirm={() => void library.confirmRegeneration()} />}
+    {selectionExplain.open && <SelectionExplainDialog state={selectionExplain.dialog} sessions={selectionExplain.sessions} historyOpen={selectionExplain.historyOpen} onInputChange={selectionExplain.setInput} onAsk={() => void selectionExplain.ask()} onToggleHistory={selectionExplain.toggleHistory} onSelectSession={selectionExplain.selectSession} onDeleteSession={selectionExplain.deleteSession} onClose={selectionExplain.close} />}
   </div>
 }
 

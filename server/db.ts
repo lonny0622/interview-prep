@@ -1,7 +1,7 @@
 import { database } from './db/connection.js'
 import './db/schema.js'
 import { createQuestions } from './db/repositories/question.repository.js'
-export { createCategory, deleteCategory, editQuestion, getQuestion, listCategories, listQuestions, createQuestions, removeQuestion, updateCategory } from './db/repositories/question.repository.js'
+export { createCategory, deleteCategory, editQuestion, getQuestion, listCategories, listQuestions, createQuestions, moveCategoryQuestions, removeQuestion, replaceGeneratedQuestionContent, updateCategory } from './db/repositories/question.repository.js'
 export { createJobProfile, createResume, deleteJobProfile, deleteResume, getProfile, listJobProfiles, updateJobProfile, updateProfile, updateResume } from './db/repositories/profile.repository.js'
 export { completeInterviewSession, createInterviewSession, getInterviewSession, insertInterviewFollowUp, listInterviewSessions, listInterviewTurns, saveInterviewTurn } from './db/repositories/interview.repository.js'
 export { createLearningSession, createPracticeSession, getLearningStats, saveLearningProgress, savePracticeAnswer } from './db/repositories/study.repository.js'

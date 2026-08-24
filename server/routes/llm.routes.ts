@@ -3,17 +3,25 @@ import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { matchesRoute } from '../http/routing.js'
+import type { ExplainSelectionInput } from '../domain/explanation.js'
 import type { QuestionDraft, QuestionOutline, ScoreQuestion, ScoreResult } from '../domain/question.js'
 
 type LlmServices = {
   callModel: (source: string) => Promise<QuestionDraft[]>
   normalizeQuestionOutline: (questions: unknown, category: string) => QuestionOutline[]
-  enrichQuestionBatch: (questions: QuestionOutline[], category: string) => Promise<QuestionDraft[]>
+  enrichQuestionBatch: (questions: QuestionOutline[], category: string, context?: string) => Promise<QuestionDraft[]>
+  enrichQuestionBatchStream: (questions: QuestionOutline[], category: string, context?: string) => AsyncIterable<QuestionDraft[]>
+  explainSelectionStream?: (input: ExplainSelectionInput) => AsyncIterable<string>
   scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
   fallbackScore: (question: ScoreQuestion, answer: string) => ScoreResult
 }
 
 type LlmConfig = { baseUrl: string; model: string; importModel: string; apiKey: string; provider: string }
+
+function writeStreamEvent(response: ServerResponse, payload: unknown): void {
+  if (!response.destroyed) response.write(`${JSON.stringify(payload)}\n`)
+}
+
 /** LLM 上游健康检查、题目导入和评分路由。具体 prompt/解析函数通过依赖注入提供。 */
 export async function handleLlmRoutes(request: IncomingMessage, response: ServerResponse, config: LlmConfig, services: LlmServices): Promise<boolean> {
   if (matchesRoute(request, 'GET', '/api/llm/health')) {
@@ -33,13 +41,100 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
   }
   if (matchesRoute(request, 'POST', '/api/llm/enrich-questions')) {
     try {
-      const body = await readJson<{ category?: string; questions?: unknown[] }>(request, 2_000_000)
+      const body = await readJson<{ category?: string; questions?: unknown[]; context?: string }>(request, 2_000_000)
       const category = String(body.category || '未分类').trim() || '未分类'
+      const context = String(body.context || '').trim().slice(0, 16_000)
       const outlines = services.normalizeQuestionOutline(body.questions, category)
       if (!outlines.length) { jsonResponse(response, 400, { error: '没有可生成的题目。' }); return true }
-      const drafts = await services.enrichQuestionBatch(outlines, category)
+      const drafts = await services.enrichQuestionBatch(outlines, category, context)
       jsonResponse(response, 200, { drafts, category, count: drafts.length, model: config.importModel }); return true
     } catch (error) { jsonResponse(response, 502, { error: errorMessage(error, '题目内容生成失败。') }); return true }
+  }
+  if (matchesRoute(request, 'POST', '/api/llm/enrich-questions/stream')) {
+    let completed = 0
+    let total = 0
+    try {
+      const body = await readJson<{ category?: string; questions?: unknown[]; context?: string }>(request, 2_000_000)
+      const category = String(body.category || '未分类').trim() || '未分类'
+      const context = String(body.context || '').trim().slice(0, 16_000)
+      const outlines = services.normalizeQuestionOutline(body.questions, category)
+      if (!outlines.length) { jsonResponse(response, 400, { error: '没有可生成的题目。' }); return true }
+      total = outlines.length
+      response.writeHead(200, {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Accel-Buffering': 'no',
+      })
+      writeStreamEvent(response, { type: 'start', total, model: config.importModel })
+      for await (const drafts of services.enrichQuestionBatchStream(outlines, category, context)) {
+        // IncomingMessage 在请求体正常读取完成后也可能进入 destroyed 状态；这里只能
+        // 根据响应端判断浏览器是否已断开，否则会吞掉首批结果并让连接永久悬挂。
+        if (response.destroyed || response.writableEnded) return true
+        completed += drafts.length
+        writeStreamEvent(response, { type: 'progress', drafts, completed, total })
+      }
+      writeStreamEvent(response, { type: 'complete', completed, total })
+      response.end()
+      return true
+    } catch (error) {
+      const message = errorMessage(error, '题目内容生成失败。')
+      if (!response.headersSent) jsonResponse(response, 502, { error: message })
+      else {
+        writeStreamEvent(response, { type: 'error', error: message, completed, total })
+        response.end()
+      }
+      return true
+    }
+  }
+  if (matchesRoute(request, 'POST', '/api/llm/explain-selection/stream')) {
+    let started = false
+    try {
+      if (!services.explainSelectionStream) { jsonResponse(response, 503, { error: '选区解释服务尚未配置。' }); return true }
+      const body = await readJson<Partial<ExplainSelectionInput>>(request, 700_000)
+      const question = body.question
+      const selectedText = String(body.selectedText || '').trim()
+      const prompt = String(body.prompt || '').trim()
+      const history = Array.isArray(body.history) ? body.history : []
+      if (!question || !selectedText || !prompt) { jsonResponse(response, 400, { error: 'question、selectedText 和 prompt 必填。' }); return true }
+      response.writeHead(200, {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Accel-Buffering': 'no',
+      })
+      started = true
+      writeStreamEvent(response, { type: 'start' })
+      for await (const content of services.explainSelectionStream({
+        question: {
+          title: String(question.title || ''),
+          category: String(question.category || ''),
+          difficulty: String(question.difficulty || ''),
+          answer: String(question.answer || '').slice(0, 8_000),
+          explanation: String(question.explanation || '').slice(0, 12_000),
+          interviewAnswer: String(question.interviewAnswer || '').slice(0, 6_000),
+          followUps: Array.isArray(question.followUps) ? question.followUps.map(String).slice(0, 10) : [],
+        },
+        selectedText: selectedText.slice(0, 4_000),
+        prompt: prompt.slice(0, 2_000),
+        history: history.flatMap((item) => {
+          if (!item || typeof item !== 'object') return []
+          const value = item as Record<string, unknown>
+          return value.role === 'user' || value.role === 'assistant'
+            ? [{ role: value.role as 'user' | 'assistant', content: String(value.content || '').slice(0, 6_000) }]
+            : []
+        }).slice(-10),
+      })) {
+        if (response.destroyed || response.writableEnded) return true
+        writeStreamEvent(response, { type: 'delta', content })
+      }
+      writeStreamEvent(response, { type: 'complete' })
+      response.end()
+      return true
+    } catch (error) {
+      const message = errorMessage(error, '选区解释失败。')
+      if (!started && !response.headersSent) jsonResponse(response, 502, { error: message })
+      else if (!response.writableEnded) { writeStreamEvent(response, { type: 'error', error: message }); response.end() }
+      return true
+    }
   }
   if (matchesRoute(request, 'POST', '/api/score-answer')) {
     try {

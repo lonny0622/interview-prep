@@ -1,4 +1,4 @@
-import { BookOpen, BrainCircuit, ChevronDown, CircleDot, Mic2, Settings } from 'lucide-react'
+import { BookOpen, BrainCircuit, ChevronDown, CircleDot, MessageSquareText, Mic2, Settings } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { llmConfig, llmStatus } from '../../config/llm'
 import type { AppPage } from '../../types/app'
@@ -20,11 +20,14 @@ type Props = {
   activePage: AppPage
   learningTodoCount: number
   serverReady: boolean
+  aiHistoryCount: number
+  aiHistoryOpen: boolean
   onNavigate: (page: AppPage) => void
+  onOpenAiHistory: () => void
   onOpenProfile: () => void
 }
 
-export function AppSidebar({ activePage, learningTodoCount, serverReady, onNavigate, onOpenProfile }: Props) {
+export function AppSidebar({ activePage, learningTodoCount, serverReady, aiHistoryCount, aiHistoryOpen, onNavigate, onOpenAiHistory, onOpenProfile }: Props) {
   const handleProfileKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
@@ -47,6 +50,11 @@ export function AppSidebar({ activePage, learningTodoCount, serverReady, onNavig
           {item.id === 'learning' && learningTodoCount > 0 && <span className="nav-badge">{learningTodoCount}</span>}
         </button>
       })}
+      <button className={aiHistoryOpen ? 'active' : ''} type="button" onClick={onOpenAiHistory}>
+        <MessageSquareText className="nav-icon" size={17} aria-hidden="true" />
+        AI 对话
+        {aiHistoryCount > 0 && <span className="nav-badge">{aiHistoryCount}</span>}
+      </button>
     </nav>
     <div className="sidebar-bottom">
       <button type="button" onClick={onOpenProfile}><Settings size={15} />设置</button>

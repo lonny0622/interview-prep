@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { llmApi } from '../../api/interviewApi'
 import { questionApi } from '../../api/questionApi'
-import { EMPTY_QUESTION_DRAFT, QUESTION_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
-import { parseImportedQuestions, parseQuestionOutline } from '../questionImport'
-import type { Mastery, Question, QuestionCategory, QuestionEditorState, QuestionImporterState } from '../../types/question'
+import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
+import { parseImportedQuestions, parseQuestionOutline, sanitizeGeneratedAnswer } from '../questionImport'
+import type { Mastery, Question, QuestionCategory, QuestionDraft, QuestionEditorState, QuestionImporterState, QuestionRegeneratorState } from '../../types/question'
 
 function loadLocalQuestions(): Question[] {
   try {
@@ -11,6 +11,21 @@ function loadLocalQuestions(): Question[] {
     return saved ? JSON.parse(saved) as Question[] : SEED_QUESTIONS
   } catch {
     return SEED_QUESTIONS
+  }
+}
+
+function loadQuestionImporter(): QuestionImporterState | null {
+  try {
+    const saved = localStorage.getItem(QUESTION_IMPORT_STORAGE_KEY)
+    if (!saved) return null
+    const importer = JSON.parse(saved) as QuestionImporterState
+    if (!importer || typeof importer.source !== 'string' || !Array.isArray(importer.drafts)) return null
+    const normalized = { ...importer, drafts: importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) })) }
+    return importer.processing
+      ? { ...normalized, processing: false, error: '上次生成被页面刷新中断，已保留进度，可继续生成剩余题目。' }
+      : normalized
+  } catch {
+    return null
   }
 }
 
@@ -24,13 +39,29 @@ export function useQuestionLibrary() {
   const [difficulty, setDifficulty] = useState('全部难度')
   const [mastery, setMastery] = useState('全部掌握度')
   const [editor, setEditor] = useState<QuestionEditorState | null>(null)
-  const [importer, setImporter] = useState<QuestionImporterState | null>(null)
+  const [importer, setImporter] = useState<QuestionImporterState | null>(loadQuestionImporter)
+  const [regenerator, setRegenerator] = useState<QuestionRegeneratorState | null>(null)
   const [categoryCatalog, setCategoryCatalog] = useState<QuestionCategory[]>([])
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
+  const importAbortController = useRef<AbortController | null>(null)
+  const regenerateAbortController = useRef<AbortController | null>(null)
+  const importerCleanupDone = useRef(false)
 
   useEffect(() => {
     localStorage.setItem(QUESTION_STORAGE_KEY, JSON.stringify(questions))
   }, [questions])
+
+  useEffect(() => {
+    if (importer) localStorage.setItem(QUESTION_IMPORT_STORAGE_KEY, JSON.stringify(importer))
+    else localStorage.removeItem(QUESTION_IMPORT_STORAGE_KEY)
+  }, [importer])
+
+  useEffect(() => {
+    if (!importer || importerCleanupDone.current) return
+    importerCleanupDone.current = true
+    const drafts = importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))
+    if (drafts.some((draft, index) => draft.answer !== importer.drafts[index]?.answer)) setImporter({ ...importer, drafts })
+  }, [importer])
 
   useEffect(() => {
     questionApi.list().then((payload) => {
@@ -89,6 +120,19 @@ export function useQuestionLibrary() {
     setCategory((current) => current === categoryToDelete.name ? '全部分类' : current)
   }
 
+  const moveCategoryQuestions = async (source: QuestionCategory, targetId: string) => {
+    const result = await questionApi.moveCategoryQuestions(source.id, targetId)
+    setCategoryCatalog((current) => current.map((item) => {
+      if (item.id === result.source.id) return result.source
+      if (item.id === result.target.id) return result.target
+      return item
+    }))
+    setQuestions((current) => current.map((question) => question.category.toLocaleLowerCase() === source.name.toLocaleLowerCase()
+      ? { ...question, category: result.target.name }
+      : question))
+    setCategory((current) => current === source.name ? result.target.name : current)
+  }
+
   const registerCategoryLocally = (name: string) => {
     const normalized = name.trim()
     if (!normalized) return
@@ -136,21 +180,58 @@ export function useQuestionLibrary() {
   }
 
   const importWithAi = async () => {
-    if (!importer?.source.trim()) return
-    const outline = parseQuestionOutline(importer.source, importer.category)
+    const source = String(importer?.source || '')
+    const selectedCategory = String(importer?.category || '')
+    if (!source.trim() || !importer) return
+    let outline
+    try {
+      outline = parseQuestionOutline(source, selectedCategory)
+    } catch (error) {
+      setImporter({ ...importer, error: error instanceof Error ? error.message : '题目列表解析失败。' })
+      return
+    }
     if (!outline.questions.length) {
       setImporter({ ...importer, error: '没有识别到题目。请每行写一道题，并用 ⭐ Level 1/2/3 标记难度。' })
       return
     }
-    setImporter({ ...importer, category: outline.category, processing: true, error: '' })
-    try {
-      const payload = await llmApi.enrichQuestions({ category: outline.category, questions: outline.questions, source: importer.source }, AbortSignal.timeout(240_000))
-      if (payload.drafts.length !== outline.questions.length) throw new Error('AI 返回的题目数量不完整，请重试。')
-      setImporter({ step: 'preview', source: importer.source, category: outline.category, drafts: payload.drafts, error: '', processing: false })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'AI 解析失败。'
-      setImporter({ ...importer, processing: false, error: /JSON|Unexpected token|格式/.test(message) ? '模型返回格式不完整，系统已自动重试；仍失败时请再次点击生成。' : message })
+    const existingDrafts = importer.step === 'preview'
+      && importer.drafts.every((draft, index) => draft.title === outline.questions[index]?.title)
+      ? importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))
+      : []
+    if (existingDrafts.length >= outline.questions.length) {
+      setImporter({ ...importer, processing: false, error: '', progress: { completed: existingDrafts.length, total: outline.questions.length } })
+      return
     }
+    importAbortController.current?.abort()
+    const controller = new AbortController()
+    importAbortController.current = controller
+    setImporter({ ...importer, step: 'preview', category: outline.category, drafts: existingDrafts, processing: true, progress: { completed: existingDrafts.length, total: outline.questions.length }, error: '' })
+    try {
+      const payload = await llmApi.enrichQuestions(
+        { category: outline.category, questions: outline.questions.slice(existingDrafts.length), source },
+        (progress) => setImporter((current) => current ? {
+          ...current,
+          drafts: [...existingDrafts, ...progress.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))],
+          progress: { completed: existingDrafts.length + progress.completed, total: outline.questions.length, status: progress.status, retrying: progress.retrying },
+        } : current),
+        controller.signal,
+      )
+      const completeDrafts = [...existingDrafts, ...payload.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))]
+      if (completeDrafts.length !== outline.questions.length) throw new Error('AI 返回的题目数量不完整，请继续生成。')
+      setImporter({ step: 'preview', source, category: outline.category, drafts: completeDrafts, error: '', processing: false, progress: { completed: completeDrafts.length, total: outline.questions.length } })
+    } catch (error) {
+      if (controller.signal.aborted) return
+      const message = error instanceof Error ? error.message : 'AI 解析失败。'
+      setImporter((current) => current ? { ...current, processing: false, error: /JSON|Unexpected token|格式/.test(message) ? '模型返回格式不完整，系统已自动重试；仍失败时请再次点击生成。' : message } : current)
+    } finally {
+      if (importAbortController.current === controller) importAbortController.current = null
+    }
+  }
+
+  const closeImporter = () => {
+    importAbortController.current?.abort()
+    importAbortController.current = null
+    setImporter(null)
   }
 
   const confirmImport = () => {
@@ -178,12 +259,96 @@ export function useQuestionLibrary() {
     setImporter(null)
   }
 
+  const runRegeneration = async (sourceQuestions: Question[], existingDrafts: QuestionDraft[]) => {
+    if (!sourceQuestions.length || existingDrafts.length >= sourceQuestions.length) return
+    regenerateAbortController.current?.abort()
+    const controller = new AbortController()
+    regenerateAbortController.current = controller
+    setRegenerator((current) => current ? { ...current, drafts: existingDrafts, processing: true, saving: false, error: '', progress: { completed: existingDrafts.length, total: sourceQuestions.length } } : current)
+    try {
+      const payload = await llmApi.enrichQuestions(
+        {
+          category: sourceQuestions[0].category,
+          questions: sourceQuestions.slice(existingDrafts.length).map((question) => ({ title: question.title, difficulty: question.difficulty })),
+        },
+        (progress) => setRegenerator((current) => current ? {
+          ...current,
+          drafts: [...existingDrafts, ...progress.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))],
+          progress: { completed: existingDrafts.length + progress.completed, total: sourceQuestions.length, status: progress.status, retrying: progress.retrying },
+        } : current),
+        controller.signal,
+      )
+      const completeDrafts = [...existingDrafts, ...payload.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))]
+      if (completeDrafts.length !== sourceQuestions.length) throw new Error('AI 返回的题目数量不完整，请继续生成。')
+      setRegenerator((current) => current ? { ...current, drafts: completeDrafts, processing: false, error: '', progress: { completed: completeDrafts.length, total: sourceQuestions.length } } : current)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      setRegenerator((current) => current ? { ...current, processing: false, error: error instanceof Error ? error.message : '重新生成失败。' } : current)
+    } finally {
+      if (regenerateAbortController.current === controller) regenerateAbortController.current = null
+    }
+  }
+
+  const startRegeneration = (sourceQuestions: Question[], scopeLabel: string) => {
+    if (!sourceQuestions.length) return
+    setRegenerator({ questions: sourceQuestions, drafts: [], scopeLabel, processing: true, saving: false, error: '', progress: { completed: 0, total: sourceQuestions.length } })
+    void runRegeneration(sourceQuestions, [])
+  }
+
+  const regenerateSingleQuestion = (question: Question) => startRegeneration([question], `单题 · ${question.title}`)
+
+  const regenerateCategory = (categoryToRegenerate: QuestionCategory) => {
+    const sourceQuestions = questions.filter((question) => question.category.toLocaleLowerCase() === categoryToRegenerate.name.toLocaleLowerCase())
+    if (!sourceQuestions.length) return
+    if (!window.confirm(`将为“${categoryToRegenerate.name}”分类下的 ${sourceQuestions.length} 道题重新生成内容。生成完成并确认后才会覆盖原内容，是否继续？`)) return
+    setCategoryManagerOpen(false)
+    startRegeneration(sourceQuestions, `分类 · ${categoryToRegenerate.name}`)
+  }
+
+  const continueRegeneration = () => {
+    if (!regenerator) return
+    void runRegeneration(regenerator.questions, regenerator.drafts)
+  }
+
+  const closeRegenerator = () => {
+    regenerateAbortController.current?.abort()
+    regenerateAbortController.current = null
+    setRegenerator(null)
+  }
+
+  const confirmRegeneration = async () => {
+    if (!regenerator || regenerator.processing || regenerator.drafts.length !== regenerator.questions.length) return
+    setRegenerator({ ...regenerator, saving: true, error: '' })
+    try {
+      const updates = regenerator.questions.map((question, index) => {
+        const draft = regenerator.drafts[index]
+        if (!draft?.answer.trim() || !draft.explanation.trim() || !draft.interviewAnswer.trim()) throw new Error(`题目“${question.title}”的生成内容不完整。`)
+        return {
+          id: question.id,
+          importance: draft.importance,
+          answer: sanitizeGeneratedAnswer(draft.answer),
+          explanation: draft.explanation,
+          interviewAnswer: draft.interviewAnswer,
+          followUps: draft.followUps,
+        }
+      })
+      const payload = await questionApi.replaceGeneratedContent(updates)
+      const replacements = new Map(payload.questions.map((question) => [question.id, question]))
+      setQuestions((current) => current.map((question) => replacements.get(question.id) ?? question))
+      setShowAnswer(true)
+      setRegenerator(null)
+    } catch (error) {
+      setRegenerator((current) => current ? { ...current, saving: false, error: error instanceof Error ? error.message : '保存生成内容失败。' } : current)
+    }
+  }
+
   return {
     questions, setQuestions, serverReady, setServerReady,
     selected, selectedId, showAnswer, query, category, difficulty, mastery,
-    categories, filteredQuestions, editor, importer, categoryCatalog, categoryManagerOpen,
+    categories, filteredQuestions, editor, importer, regenerator, categoryCatalog, categoryManagerOpen,
     setShowAnswer, setQuery, setCategory, setDifficulty, setMastery, setEditor, setImporter,
     setCategoryManagerOpen, setSelectedId, updateMastery, openEditor, createCategory,
-    renameCategory, deleteCategory, saveQuestion, deleteQuestion, importPreview, importWithAi, confirmImport,
+    renameCategory, deleteCategory, moveCategoryQuestions, saveQuestion, deleteQuestion, importPreview, importWithAi, closeImporter, confirmImport,
+    setRegenerator, regenerateSingleQuestion, regenerateCategory, continueRegeneration, closeRegenerator, confirmRegeneration,
   }
 }

@@ -2,9 +2,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readJson } from '../http/body.js'
 import { jsonResponse } from '../http/response.js'
 import { errorCode, errorMessage } from '../http/errors.js'
-import { lastPathSegment, matchesRoute } from '../http/routing.js'
-import { createCategory, createQuestions, deleteCategory, editQuestion, listCategories, listQuestions, removeQuestion, updateCategory } from '../db/repositories/question.repository.js'
-import type { QuestionDraft, QuestionPatch } from '../domain/question.js'
+import { lastPathSegment, matchesRoute, pathSegment } from '../http/routing.js'
+import { createCategory, createQuestions, deleteCategory, editQuestion, listCategories, listQuestions, moveCategoryQuestions, removeQuestion, replaceGeneratedQuestionContent, updateCategory } from '../db/repositories/question.repository.js'
+import type { GeneratedQuestionContentUpdate, QuestionDraft, QuestionPatch } from '../domain/question.js'
 
 /** 题库和分类的 HTTP 适配层。筛选、持久化和分类规则不再和 gateway 混在一起。 */
 export async function handleQuestionRoutes(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
@@ -17,11 +17,36 @@ export async function handleQuestionRoutes(request: IncomingMessage, response: S
   if (matchesRoute(request, 'POST', '/api/categories')) {
     try { jsonResponse(response, 201, { category: createCategory((await readJson<{ name?: string }>(request)).name) }); return true } catch (error) { jsonResponse(response, errorCode(error) === 'CATEGORY_EXISTS' ? 409 : 400, { error: errorMessage(error, '分类创建失败。') }); return true }
   }
+  if (matchesRoute(request, 'POST', /^\/api\/categories\/[^/]+\/move-questions$/)) {
+    try {
+      const body = await readJson<{ targetCategoryId?: string }>(request)
+      if (!body.targetCategoryId) { jsonResponse(response, 400, { error: '请选择目标分类。' }); return true }
+      const result = moveCategoryQuestions(pathSegment(request, 3), body.targetCategoryId)
+      jsonResponse(response, result ? 200 : 404, result ?? { error: '原分类或目标分类不存在。' })
+      return true
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目迁移失败。') }); return true }
+  }
   if (matchesRoute(request, 'PATCH', /^\/api\/categories\/[^/]+$/)) {
-    try { const category = updateCategory(lastPathSegment(request), (await readJson<{ name?: string }>(request)).name); jsonResponse(response, category ? 200 : 404, category ? { category } : { error: '分类不存在。' }); return true } catch (error) { jsonResponse(response, errorCode(error) === 'CATEGORY_EXISTS' ? 409 : 400, { error: errorMessage(error, '分类更新失败。') }); return true }
+    try {
+      const category = updateCategory(lastPathSegment(request), (await readJson<{ name?: string }>(request)).name)
+      jsonResponse(response, category ? 200 : 404, category ? { category } : { error: '分类不存在。' })
+      return true
+    } catch (error) {
+      const code = errorCode(error) || ''
+      jsonResponse(response, ['CATEGORY_EXISTS', 'CATEGORY_RESERVED'].includes(code) ? 409 : 400, { error: errorMessage(error, '分类更新失败。') })
+      return true
+    }
   }
   if (matchesRoute(request, 'DELETE', /^\/api\/categories\/[^/]+$/)) {
-    try { const deleted = deleteCategory(lastPathSegment(request)); jsonResponse(response, deleted ? 204 : 404, deleted ? {} : { error: '分类不存在。' }); return true } catch (error) { jsonResponse(response, errorCode(error) === 'CATEGORY_IN_USE' ? 409 : 400, { error: errorMessage(error, '分类删除失败。') }); return true }
+    try {
+      const deleted = deleteCategory(lastPathSegment(request))
+      jsonResponse(response, deleted ? 204 : 404, deleted ? {} : { error: '分类不存在。' })
+      return true
+    } catch (error) {
+      const code = errorCode(error) || ''
+      jsonResponse(response, ['CATEGORY_IN_USE', 'CATEGORY_RESERVED'].includes(code) ? 409 : 400, { error: errorMessage(error, '分类删除失败。') })
+      return true
+    }
   }
   if (matchesRoute(request, 'POST', '/api/questions')) {
     try {
@@ -29,6 +54,14 @@ export async function handleQuestionRoutes(request: IncomingMessage, response: S
       if (!Array.isArray(body.questions) || !body.questions.length) { jsonResponse(response, 400, { error: 'questions 不能为空数组。' }); return true }
       jsonResponse(response, 201, { questions: createQuestions(body.questions) }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目保存失败。') }); return true }
+  }
+  if (matchesRoute(request, 'PATCH', '/api/questions/generated-content')) {
+    try {
+      const body = await readJson<{ updates?: GeneratedQuestionContentUpdate[] }>(request, 2_000_000)
+      if (!Array.isArray(body.updates) || !body.updates.length) { jsonResponse(response, 400, { error: 'updates 不能为空数组。' }); return true }
+      jsonResponse(response, 200, { questions: replaceGeneratedQuestionContent(body.updates) })
+      return true
+    } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '生成内容更新失败。') }); return true }
   }
   if (matchesRoute(request, 'PATCH', /^\/api\/questions\/[^/]+$/)) {
     try { const updated = editQuestion(lastPathSegment(request), await readJson<QuestionPatch>(request)); jsonResponse(response, updated ? 200 : 404, updated ? { question: updated } : { error: '题目不存在。' }); return true } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '题目更新失败。') }); return true }

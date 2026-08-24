@@ -20,6 +20,10 @@
 
 批量导入可以单独配置低延迟模型：`LLM_IMPORT_MODEL=gpt-5.4-mini`。默认模型继续用于后续评分和面试复盘，导入任务不必占用高推理模型。
 
+题目答案生成会按最多 3 道一批顺序调用模型，并通过 NDJSON 将已完成批次即时返回浏览器。批次超时会自动降级为逐题生成，流连接中断时只续传剩余题目；输入、进度和已生成草稿会保存在浏览器本地，页面刷新后也可从断点继续。整个导入任务不设置固定总超时，每次上游模型调用仍受 `LLM_REQUEST_TIMEOUT_MS` 约束。
+
+已入库题目支持从题目详情单题重新生成，也支持在分类管理中按分类批量重新生成。新内容会先进入审核预览，确认后以事务方式覆盖生成字段，不改变题目分类、难度和掌握度。
+
 ## 开发
 
 ```bash
@@ -37,6 +41,60 @@ pnpm test
 ```
 
 `pnpm build` 会同时编译前端和服务端；`pnpm test` 会先构建 Gateway，再执行 repository、LLM、媒体、画像、面试编排和 HTTP helper 的 smoke/unit tests。
+
+本地开发默认关闭登录校验。需要本地验证完整登录流程时，在 `.env.local` 中设置 `AUTH_ENABLED=true`，并补齐下文列出的认证变量。
+
+## 登录与安全
+
+生产环境只接受环境变量中配置的唯一账户，不提供注册、找回密码或创建第二个用户的入口。密码以 scrypt 哈希形式保存，登录后使用带 `HttpOnly`、`Secure`、`SameSite=Strict` 属性的签名 Cookie；修改密码哈希或 `SESSION_SECRET` 会让已有会话立即失效。
+
+生成密码哈希（密码至少 16 位，建议使用密码管理器生成随机密码）：
+
+```bash
+pnpm auth:hash
+```
+
+生成独立的会话密钥：
+
+```bash
+openssl rand -base64 48
+```
+
+登录接口默认每个来源 IP 在 15 分钟内最多执行 5 次密码校验，并有账户级总量限制；超限后锁定 15 分钟。服务同时启用了同源请求校验、严格 CSP、安全响应头和无通配 CORS。生产环境不要将容器端口直接暴露到公网，只允许 Coolify 反向代理访问，否则客户端可能伪造代理转发头绕过 IP 限流。
+
+## Coolify 部署
+
+仓库根目录已经包含生产用 `Dockerfile`，单个 Node 进程会同时提供前端、API 和 `/health` 健康检查。镜像内包含 ffmpeg、PDF 文本提取和 DOCX 解压所需工具。
+
+1. 在 Coolify 新建 **Application → Public Repository/Private Repository**，Base Directory 指向本项目目录，Build Pack 选择 `Dockerfile`。
+2. 容器端口设置为 `8787`，健康检查路径设置为 `/health`。
+3. 在 **Persistent Storage** 新建不填写 Source Path 的 **Volume Mount**，Destination Path 设置为 `/app/data`；SQLite 数据全部保存在这里。部署迁移或重建前先备份该卷。
+4. 绑定 HTTPS 域名，并设置以下运行时环境变量（`APP_ORIGIN` 必须与浏览器实际访问的 origin 完全一致，且不带末尾 `/`）：
+
+```dotenv
+AUTH_USERNAME=你的唯一用户名
+AUTH_PASSWORD_HASH=pnpm auth:hash 输出的完整内容
+SESSION_SECRET=openssl rand -base64 48 的输出
+APP_ORIGIN=https://interview.example.com
+TRUST_PROXY=true
+
+VITE_LLM_PROVIDER=openai-compatible
+VITE_LLM_BASE_URL=https://api.example.com/v1
+VITE_LLM_MODEL=your-model-name
+LLM_API_KEY=your-server-only-api-key
+LLM_IMPORT_MODEL=your-fast-model-name
+
+STT_PROVIDER=openai-compatible
+STT_BASE_URL=https://api.example.com
+STT_MODEL=your-transcription-model
+STT_API_KEY=your-server-only-stt-key
+```
+
+5. 部署后先访问 `https://你的域名/health`，应返回 `{"status":"ok"}`，随后再打开首页测试登录。不要设置 `AUTH_ENABLED=false` 或 `AUTH_COOKIE_SECURE=false`；生产启动时缺少账户、密码哈希、会话密钥或 `APP_ORIGIN` 会直接失败，避免误把未受保护的实例上线。
+
+在 Coolify 的环境变量 Normal View 中，将 `AUTH_PASSWORD_HASH` 勾选为 **Literal**，否则哈希中的 `$` 可能被当成变量引用。`AUTH_PASSWORD_HASH`、`SESSION_SECRET`、`LLM_API_KEY`、`STT_API_KEY` 都只需要 Runtime Variable，应关闭 Build Variable，避免秘密进入镜像构建参数；三个 `VITE_LLM_*` 变量保留 Build + Runtime，供前端状态展示和服务端运行时读取。
+
+如果域名接入 Cloudflare，建议再启用 Cloudflare Access；如果只有固定出口 IP，也可以在 Coolify/防火墙层配置 IP allowlist。它们位于应用登录之前，能进一步减少扫描和爆破流量。
 
 ## 服务端结构
 

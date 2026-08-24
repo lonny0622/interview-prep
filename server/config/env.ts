@@ -19,9 +19,23 @@ function readEnvFile(): Record<string, string> {
 
 const fileEnv = readEnvFile()
 const get = (name: string, fallback = '') => process.env[name] || fileEnv[name] || fallback
+const isProduction = get('NODE_ENV') === 'production'
+
+function booleanValue(name: string, fallback: boolean): boolean {
+  const value = get(name)
+  if (!value) return fallback
+  return value === 'true' || value === '1'
+}
+
+function positiveNumber(name: string, fallback: number): number {
+  const value = Number(get(name, String(fallback)))
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
 
 export const appConfig = {
   rootDir,
+  isProduction,
+  host: get('HOST', isProduction ? '0.0.0.0' : '127.0.0.1'),
   provider: get('VITE_LLM_PROVIDER', 'openai-compatible'),
   baseUrl: get('VITE_LLM_BASE_URL').replace(/\/$/, ''),
   model: get('VITE_LLM_MODEL'),
@@ -32,6 +46,19 @@ export const appConfig = {
   sttModel: get('STT_MODEL'),
   sttApiKey: get('STT_API_KEY'),
   ffmpegPath: get('STT_FFMPEG_PATH', 'ffmpeg'),
-  port: Number(get('LLM_GATEWAY_PORT', '8787')),
-  requestTimeoutMs: Number(get('LLM_REQUEST_TIMEOUT_MS', '90000')),
+  port: positiveNumber('PORT', positiveNumber('LLM_GATEWAY_PORT', 8787)),
+  requestTimeoutMs: positiveNumber('LLM_REQUEST_TIMEOUT_MS', 90000),
+  auth: {
+    enabled: booleanValue('AUTH_ENABLED', isProduction),
+    username: get('AUTH_USERNAME').trim(),
+    passwordHash: get('AUTH_PASSWORD_HASH'),
+    sessionSecret: get('SESSION_SECRET'),
+    sessionTtlSeconds: positiveNumber('AUTH_SESSION_TTL_SECONDS', 43_200),
+    maxAttempts: positiveNumber('AUTH_MAX_ATTEMPTS', 5),
+    attemptWindowMs: positiveNumber('AUTH_ATTEMPT_WINDOW_SECONDS', 900) * 1_000,
+    lockoutMs: positiveNumber('AUTH_LOCKOUT_SECONDS', 900) * 1_000,
+    secureCookie: booleanValue('AUTH_COOKIE_SECURE', isProduction),
+    trustProxy: booleanValue('TRUST_PROXY', isProduction),
+    appOrigin: get('APP_ORIGIN').replace(/\/$/, ''),
+  },
 } as const

@@ -1,3 +1,4 @@
+import '../schema.js'
 import { database } from '../connection.js'
 import type { Mastery } from '../../domain/question.js'
 import type { CategoryLearningStats, LearningProgress, LearningSession, LearningStats, PracticeAnswer, PracticeSession } from '../../domain/study.js'

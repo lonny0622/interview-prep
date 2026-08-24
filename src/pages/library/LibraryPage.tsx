@@ -24,6 +24,8 @@ type Props = {
   onCreateQuestion: () => void
   onEditQuestion: (question: Question) => void
   onDeleteQuestion: () => void
+  onRegenerateQuestion: (question: Question) => void
+  onQuestionContextMenu: (event: React.MouseEvent<HTMLElement>, question: Question) => void
   onManageCategories: () => void
   onImportQuestions: () => void
   onStartPractice: () => void
@@ -34,7 +36,7 @@ export function LibraryPage(props: Props) {
     questions, filteredQuestions, selected, selectedId, categories, query, category, difficulty, mastery,
     showAnswer, onQueryChange, onCategoryChange, onDifficultyChange, onMasteryFilterChange,
     onSelectQuestion, onShowAnswerChange, onUpdateMastery, onCreateQuestion, onEditQuestion,
-    onDeleteQuestion, onManageCategories, onImportQuestions, onStartPractice,
+    onDeleteQuestion, onRegenerateQuestion, onQuestionContextMenu, onManageCategories, onImportQuestions, onStartPractice,
   } = props
 
   return <div className="library-page">
@@ -59,12 +61,12 @@ export function LibraryPage(props: Props) {
     <div className="library-layout">
       <section className="question-list" aria-label="面试题列表">
         <div className="list-heading"><span>{filteredQuestions.length} 道题目</span><button className="icon-button" type="button" title="筛选题目"><ListFilter size={14} /></button></div>
-        {filteredQuestions.map((question) => <button key={question.id} className={`question-item ${question.id === selectedId ? 'active' : ''}`} type="button" onClick={() => onSelectQuestion(question.id)}>
+        {filteredQuestions.map((question) => <button key={question.id} className={`question-item ${question.id === selectedId ? 'active' : ''}`} type="button" onClick={() => onSelectQuestion(question.id)} onContextMenu={(event) => onQuestionContextMenu(event, question)}>
           <span className="question-item-title">{question.title}</span>
           <span className="question-item-meta"><span>{question.category}</span><span className={`difficulty ${question.difficulty}`}>{question.difficulty}</span><span className="mastery-dot" data-level={question.mastery} />{question.mastery}</span>
         </button>)}
       </section>
-      <section className="question-detail">
+      <section className="question-detail" onContextMenu={(event) => { if (selected) onQuestionContextMenu(event, selected) }}>
         {selected ? <>
           <div className="detail-topline"><span className="tag">{selected.category}</span><span className={`difficulty ${selected.difficulty}`}>{selected.difficulty}</span><span className="importance">重要性 {selected.importance}/5</span><button className="icon-button" type="button" title="更多操作"><MoreHorizontal size={16} /></button></div>
           <h2>{selected.title}</h2>
@@ -74,7 +76,7 @@ export function LibraryPage(props: Props) {
             {showAnswer ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.interviewAnswer}</ReactMarkdown></div> : <div className="answer-locked"><Sparkles size={18} aria-hidden="true" /><p>先尝试自己回答，再查看答案和解析</p><button className="secondary-button" type="button" onClick={() => onShowAnswerChange(true)}>查看答案</button></div>}
           </div>
           <div className="detail-section"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">可选</span></div><ul className="follow-ups">{selected.followUps.map((followUp) => <li key={followUp}>{followUp}<ArrowRight size={13} aria-hidden="true" /></li>)}</ul></div>
-          <div className="detail-actions"><button className="danger-button" type="button" onClick={onDeleteQuestion}><Trash2 size={13} />删除</button><button className="quiet-button" type="button" onClick={() => onEditQuestion(selected)}><FilePenLine size={13} />编辑题目</button><button className="primary-button" type="button" onClick={onStartPractice}>开始练习 <ArrowRight size={13} /></button></div>
+          <div className="detail-actions"><button className="danger-button" type="button" onClick={onDeleteQuestion}><Trash2 size={13} />删除</button><button className="quiet-button" type="button" onClick={() => onRegenerateQuestion(selected)}><Sparkles size={13} />重新生成答案</button><button className="quiet-button" type="button" onClick={() => onEditQuestion(selected)}><FilePenLine size={13} />编辑题目</button><button className="primary-button" type="button" onClick={onStartPractice}>开始练习 <ArrowRight size={13} /></button></div>
         </> : <div className="empty-state">从左侧选择一道题目开始</div>}
       </section>
     </div>

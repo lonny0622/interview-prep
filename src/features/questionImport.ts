@@ -14,6 +14,26 @@ const difficultyFromLevel = (level = '', stars = '') => {
 
 const stripListPrefix = (line = '') => String(line || '').replace(/^(?:[-*•]|\d+[.)、]|[一二三四五六七八九十百]+、)\s*/, '').trim()
 
+function markdownSection(content: string, title: string): string {
+  const match = new RegExp(`^#{1,6}\\s*${title}[：:]?\\s*$`, 'im').exec(content)
+  if (!match || match.index === undefined) return ''
+  const tail = content.slice(match.index + match[0].length).replace(/^\s*\n/, '')
+  const nextHeading = tail.search(/^#{1,6}\s+/m)
+  return (nextHeading >= 0 ? tail.slice(0, nextHeading) : tail).trim()
+}
+
+export function sanitizeGeneratedAnswer(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  const coreConclusion = markdownSection(raw, '核心结论')
+  let answer = coreConclusion || raw
+  if (!coreConclusion) {
+    const detailedHeading = /^#{1,6}\s*(?:详细解析|解析|速记)[：:]?\s*$/im.exec(raw)
+    if (detailedHeading?.index) answer = raw.slice(0, detailedHeading.index)
+  }
+  return answer.replace(/^#{1,6}\s*(?:答案|正确答案|参考答案)[：:]?\s*/i, '').trim()
+}
+
 export function parseQuestionOutline(source = '', categoryOverride = ''): { category: string; questions: QuestionOutline[] } {
   const safeSource = String(source || '')
   const safeCategory = String(categoryOverride || '')
@@ -24,9 +44,9 @@ export function parseQuestionOutline(source = '', categoryOverride = ''): { cate
 
   for (const original of lines) {
     const line = original.replace(/^#+\s*/, '').trim()
-    const levelMatch = line.match(/^(⭐+|★+)\s*(?:Level\s*)?(\d+)?\s*(?:[:：-]\s*(.*))?$/i)
+    const levelMatch = line.match(/^(⭐+|★+)\s*(?:Level\s*)?(\d+)?(?:\s*[~～-]\s*(\d+))?\s*(?:[:：-]\s*(.*))?$/i)
     if (levelMatch) {
-      difficulty = difficultyFromLevel(levelMatch[2] || '', levelMatch[1])
+      difficulty = difficultyFromLevel(levelMatch[3] || levelMatch[2] || '', levelMatch[1])
       continue
     }
     if (/^(?:Level\s*)\d+/i.test(line)) {
@@ -37,8 +57,8 @@ export function parseQuestionOutline(source = '', categoryOverride = ''): { cate
     if (/^(?:---+|分类[:：])/i.test(line)) continue
 
     const numberedHeading = line.match(/^(?:[一二三四五六七八九十百]+|\d+)[、.)]\s*(.+)$/)
-    if (numberedHeading && !/[？?]/.test(numberedHeading[2])) {
-      if (!category) category = numberedHeading[2].trim()
+    if (numberedHeading && !/[？?]/.test(numberedHeading[1])) {
+      if (!category) category = numberedHeading[1].trim()
       continue
     }
     if (/^#/.test(original) && !/[？?]/.test(line)) {
@@ -83,7 +103,7 @@ function normalizeImportedQuestion(value: unknown): QuestionDraft {
     category: String(item.category ?? '未分类').trim(),
     difficulty: normalizeDifficulty(item.difficulty),
     importance: normalizeImportance(item.importance),
-    answer: String(item.answer ?? item.answer_md ?? '').trim(),
+    answer: sanitizeGeneratedAnswer(item.answer ?? item.answer_md),
     explanation: String(item.explanation ?? item.explanation_md ?? '').trim(),
     interviewAnswer: String(item.interviewAnswer ?? item.interview_answer ?? '').trim(),
     followUps: Array.isArray(followUps) ? followUps.map(String).filter(Boolean) : [],

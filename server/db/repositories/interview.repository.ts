@@ -1,3 +1,4 @@
+import '../schema.js'
 import { database } from '../connection.js'
 import type { InterviewBlueprintItem, InterviewProfile, InterviewReport, InterviewSession, InterviewStage, InterviewTurn, SaveInterviewTurnInput } from '../../domain/interview.js'
 import type { ScoreResult } from '../../domain/question.js'

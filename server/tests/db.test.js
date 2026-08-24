@@ -27,6 +27,47 @@ describe('question repository', () => {
     assert.equal(db.editQuestion(created.id, { mastery: '掌握' }).mastery, '掌握')
     assert.equal(db.removeQuestion(created.id), true)
   })
+
+  it('keeps the fallback category reserved and moves all of its questions', () => {
+    const target = db.createCategory('迁移目标分类')
+    const [created] = db.createQuestions([{
+      title: '待分类题目', category: '', difficulty: '简单', importance: 1,
+      answer: '答案', explanation: '解析', interviewAnswer: '建议回答', followUps: [],
+    }])
+    const fallback = db.listCategories().find((category) => category.name === '未分类')
+
+    assert.ok(fallback)
+    assert.equal(fallback.questionCount, 1)
+    assert.throws(() => db.updateCategory(fallback.id, '其他分类'), { code: 'CATEGORY_RESERVED' })
+    assert.throws(() => db.deleteCategory(fallback.id), { code: 'CATEGORY_RESERVED' })
+
+    const result = db.moveCategoryQuestions(fallback.id, target.id)
+    assert.equal(result.moved, 1)
+    assert.equal(result.source.questionCount, 0)
+    assert.equal(result.target.questionCount, 1)
+    assert.equal(db.getQuestion(created.id).category, target.name)
+
+    assert.equal(db.removeQuestion(created.id), true)
+    assert.equal(db.deleteCategory(target.id), true)
+  })
+
+  it('replaces generated content without changing question identity or classification', () => {
+    const [created] = db.createQuestions([{
+      title: '需要重新生成的题目', category: '重生成测试', difficulty: '困难', importance: 2,
+      answer: '旧答案', explanation: '旧解析', interviewAnswer: '旧回答', followUps: [],
+    }])
+    const [updated] = db.replaceGeneratedQuestionContent([{
+      id: created.id, importance: 5, answer: '新答案', explanation: '新解析', interviewAnswer: '新回答', followUps: ['新追问'],
+    }])
+
+    assert.equal(updated.title, created.title)
+    assert.equal(updated.category, created.category)
+    assert.equal(updated.difficulty, created.difficulty)
+    assert.equal(updated.mastery, created.mastery)
+    assert.equal(updated.answer, '新答案')
+    assert.deepEqual(updated.followUps, ['新追问'])
+    assert.equal(db.removeQuestion(created.id), true)
+  })
 })
 
 describe('profile repository', () => {
