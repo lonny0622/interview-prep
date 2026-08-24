@@ -90,7 +90,7 @@ async function enrichQuestionChunk(outlines: QuestionOutline[], category: string
     temperature: 0.15,
     max_tokens: Math.min(6_000, Math.max(1_400, outlines.length * 900)),
     messages: [
-      { role: 'system', content: `你是一名资深 React Native 面试教练和题库编辑。只输出 JSON 数组，不要代码围栏。字段结构：${enrichedQuestionSchema}。技术背景以当前主流 React Native + TypeScript 为准，覆盖 React Native 0.7x/0.8x、Hermes、新架构 Fabric/TurboModules/JSI 等能力时必须说明版本或适用边界，不能把已经废弃的方案当成唯一正确答案。answer 只写直接答案，控制在 1-3 段或不超过 5 个要点，禁止出现“核心结论”“详细解析”“速记”等小节，禁止复制 explanation。explanation 才负责展开原理、原因、示例和边界，必须使用 Markdown 且严格包含“## 核心结论”“## 详细解析”“## 速记”三个小节。建议回答要短、自然、可直接在面试中复述，抓住定义、原理和一个关键取舍。每道题生成 2-4 个发散问题。严格按照输入题目顺序返回，title 必须原样保留，不得漏题、合并题目或虚构与题目无关的内容。${projectInstruction}` },
+      { role: 'system', content: `你是一名资深 React Native 面试教练和题库编辑。只输出 JSON 数组，不要代码围栏。字段结构：${enrichedQuestionSchema}。技术背景以当前主流 React Native + TypeScript 为准，覆盖 React Native 0.7x/0.8x、Hermes、新架构 Fabric/TurboModules/JSI 等能力时必须说明版本或适用边界，不能把已经废弃的方案当成唯一正确答案。answer 只写直接答案，控制在 1-3 段或不超过 5 个要点，禁止出现“核心结论”“详细解析”“速记”等小节，禁止复制 explanation。explanation 才负责展开原理、原因、示例和边界，必须使用 Markdown 且严格包含“## 核心结论”“## 详细解析”“## 速记”三个小节。当解析涉及三步以上流程、多个模块的调用关系、状态流转或架构层次，且图比纯文字更清楚时，在 explanation 中补充一个简洁的 Mermaid 代码块；节点文字保持简短，没有必要时不要强行画图。建议回答要短、自然、可直接在面试中复述，抓住定义、原理和一个关键取舍。每道题生成 2-4 个发散问题。严格按照输入题目顺序返回，title 必须原样保留，不得漏题、合并题目或虚构与题目无关的内容。${projectInstruction}` },
       { role: 'user', content: JSON.stringify({ category, questions: outlines, ...(context ? { projectContext: context.slice(0, 16_000) } : {}) }) },
     ],
   }, undefined, signal)

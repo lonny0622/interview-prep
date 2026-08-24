@@ -27,3 +27,4 @@ dist-ssr
 .env.local
 data/*.sqlite
 data/*.sqlite-*
+data/backups/

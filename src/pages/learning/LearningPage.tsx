@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Sparkles } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { MarkdownContent } from '../../components/markdown/MarkdownContent'
 import { DIFFICULTY_ORDER, EMPTY_LEARNING_FILTERS, MASTERY_ORDER } from '../../constants/questions'
+import { useTextSelectionAction } from '../../features/ai/useTextSelectionAction'
 import type { Mastery, Question } from '../../types/question'
 import type { LearningFilters, LearningStats } from '../../types/study'
 
@@ -18,11 +18,13 @@ type Props = {
   onNext: () => void
   onMarkMastery: (mastery: Mastery) => void
   onQuestionContextMenu: (event: React.MouseEvent<HTMLElement>, question: Question) => void
+  onExplainSelection: (text: string, question: Question) => void
 }
 
-export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery, onQuestionContextMenu }: Props) {
+export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery, onQuestionContextMenu, onExplainSelection }: Props) {
   const current = questions[index]
   const masteryTotal = Math.max(stats.totalQuestions, 1)
+  const { containerRef, selectionAction } = useTextSelectionAction<HTMLDivElement>(current, onExplainSelection)
 
   return <div className="learning-page">
     <header className="page-header learning-header">
@@ -56,12 +58,13 @@ export function LearningPage({ questions, index, revealAnswer, stats, filters, c
         <button className="quiet-button" type="button" onClick={() => onFiltersChange(EMPTY_LEARNING_FILTERS)}>重置筛选</button>
       </div>
     </section>
-    {current ? <div className="learning-card" onContextMenu={(event) => onQuestionContextMenu(event, current)}>
+    {current ? <div ref={containerRef} className="learning-card" onContextMenu={(event) => onQuestionContextMenu(event, current)}>
       <div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div>
       <h2>{current.title}</h2>
       <div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div>
-      <div className="learning-answer">{revealAnswer ? <div className="answer-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.answer}</ReactMarkdown><h3>详细解析</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.explanation}</ReactMarkdown><h3>面试时建议的回答</h3><ReactMarkdown remarkPlugins={[remarkGfm]}>{current.interviewAnswer}</ReactMarkdown></div> : <button className="reveal-button" type="button" onClick={onRevealAnswer}>查看答案与解析 <ChevronDown size={14} /></button>}</div>
+      <div className="learning-answer">{revealAnswer ? <div className="answer-content"><MarkdownContent>{current.answer}</MarkdownContent><h3>详细解析</h3><MarkdownContent>{current.explanation}</MarkdownContent><h3>面试时建议的回答</h3><MarkdownContent>{current.interviewAnswer}</MarkdownContent></div> : <button className="reveal-button" type="button" onClick={onRevealAnswer}>查看答案与解析 <ChevronDown size={14} /></button>}</div>
       <div className="learning-actions"><button className="quiet-button" type="button" disabled={index === 0} onClick={onPrevious}><ArrowLeft size={13} />上一题</button><div>{MASTERY_ORDER.map((item) => <button key={item} className={`mastery-chip ${current.mastery === item ? 'selected' : ''}`} type="button" onClick={() => onMarkMastery(item)}>{item}</button>)}</div><button className="primary-button" type="button" onClick={onNext}>下一题 <ArrowRight size={13} /></button></div>
     </div> : <div className="learning-empty-state"><Sparkles size={20} /><div><strong>当前筛选没有题目</strong><p>可以切换分类、难度或掌握程度，继续安排学习。</p></div><button className="primary-button" type="button" onClick={() => onFiltersChange(EMPTY_LEARNING_FILTERS)}>查看未学习题目 <ArrowRight size={13} /></button></div>}
+    {selectionAction}
   </div>
 }

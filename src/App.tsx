@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 import { SelectionExplainDialog } from './components/ai/SelectionExplainDialog'
 import { AppSidebar } from './components/layout/AppSidebar'
@@ -21,6 +21,7 @@ import type { AppPage } from './types/app'
 
 function App() {
   const [activePage, setActivePage] = useState<AppPage>('library')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('interview-prep.sidebar-collapsed.v1') === 'true')
   const library = useQuestionLibrary()
   const profile = useProfileData()
   const learning = useLearningSession({
@@ -32,6 +33,8 @@ function App() {
   const practice = usePracticeSession(library.questions)
   const interview = useInterviewSession()
   const selectionExplain = useSelectionExplain()
+
+  useEffect(() => localStorage.setItem('interview-prep.sidebar-collapsed.v1', String(sidebarCollapsed)), [sidebarCollapsed])
 
   const renderPage = () => {
     if (activePage === 'library') return <LibraryPage
@@ -57,6 +60,7 @@ function App() {
       onDeleteQuestion={library.deleteQuestion}
       onRegenerateQuestion={library.regenerateSingleQuestion}
       onQuestionContextMenu={selectionExplain.openFromContextMenu}
+      onExplainSelection={selectionExplain.openSelection}
       onManageCategories={() => library.setCategoryManagerOpen(true)}
       onImportQuestions={() => library.setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}
       onStartPractice={() => setActivePage('practice')}
@@ -75,6 +79,7 @@ function App() {
       onNext={() => learning.index < learning.questions.length - 1 ? learning.next() : setActivePage('library')}
       onMarkMastery={(mastery) => void learning.markMastery(mastery)}
       onQuestionContextMenu={selectionExplain.openFromContextMenu}
+      onExplainSelection={selectionExplain.openSelection}
     />
 
     if (activePage === 'practice') return <PracticePage
@@ -114,7 +119,9 @@ function App() {
       serverReady={library.serverReady}
       aiHistoryCount={selectionExplain.sessions.length}
       aiHistoryOpen={selectionExplain.open && selectionExplain.historyOpen}
+      collapsed={sidebarCollapsed}
       onNavigate={setActivePage}
+      onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
       onOpenAiHistory={selectionExplain.openHistory}
       onOpenProfile={() => profile.setOpen(true)}
     />

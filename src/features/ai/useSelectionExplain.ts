@@ -24,10 +24,9 @@ export function useSelectionExplain() {
     setSessions((current) => [toExplainSession(session), ...current.filter((item) => item.id !== session.id)])
   }, [])
 
-  const openFromContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, question: Question) => {
-    const selectedText = window.getSelection()?.toString().trim() || ''
+  const openSelection = useCallback((selectedText: string, question: Question) => {
+    selectedText = selectedText.trim().slice(0, 4000)
     if (!selectedText) return
-    event.preventDefault()
     abortRef.current?.abort()
     const previous = dialogRef.current
     if (previous) saveSession(previous)
@@ -38,6 +37,13 @@ export function useSelectionExplain() {
     setHistoryOpen(false)
     setOpen(true)
   }, [saveSession])
+
+  const openFromContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, question: Question) => {
+    const selectedText = window.getSelection()?.toString().trim() || ''
+    if (!selectedText) return
+    event.preventDefault()
+    openSelection(selectedText, question)
+  }, [openSelection])
 
   const close = useCallback(() => {
     abortRef.current?.abort()
@@ -145,5 +151,5 @@ export function useSelectionExplain() {
     }
   }, [dialog, finishRequest, saveSession, updateDialog])
 
-  return { dialog, sessions, open, historyOpen, openFromContextMenu, openHistory, toggleHistory, selectSession, deleteSession, close, setInput, ask }
+  return { dialog, sessions, open, historyOpen, openSelection, openFromContextMenu, openHistory, toggleHistory, selectSession, deleteSession, close, setInput, ask }
 }

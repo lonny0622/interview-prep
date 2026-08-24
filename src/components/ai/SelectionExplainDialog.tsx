@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ArrowUp, Bot, History, MessageSquareText, Sparkles, Trash2, UserRound, X } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { MarkdownContent } from '../markdown/MarkdownContent'
 import type { ExplainDialogState, ExplainSession } from '../../types/ai'
 
 type Props = {
@@ -71,7 +70,7 @@ export function SelectionExplainDialog({ state, sessions, historyOpen, onInputCh
             {!state.messages.length && <div className="ai-explain-empty"><Bot size={20} /><p>可以问我“这句话是什么意思？”或“给一个实际例子”。</p></div>}
             {state.messages.map((message, index) => <article key={`${message.role}-${index}`} className={`ai-message ${message.role}`}>
               <span className="ai-message-avatar" aria-label={message.role === 'user' ? '你' : 'AI'}>{message.role === 'user' ? <UserRound size={14} /> : <Bot size={14} />}</span>
-              <div className="ai-message-body"><span className="ai-message-role">{message.role === 'user' ? '你' : 'AI 助教'}</span><div className="ai-message-content">{message.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (state.streaming ? '正在思考…' : '')}</ReactMarkdown> : <p>{message.content}</p>}</div></div>
+              <div className="ai-message-body"><span className="ai-message-role">{message.role === 'user' ? '你' : 'AI 助教'}</span><div className="ai-message-content">{message.role === 'assistant' ? <MarkdownContent>{message.content || (state.streaming ? '正在思考…' : '')}</MarkdownContent> : <p>{message.content}</p>}</div></div>
             </article>)}
             {state.error && <div className="ai-explain-error"><strong>暂时无法连接 AI</strong><span>{state.error}</span><small>该会话已保存，可从“历史”中重新打开并继续追问。</small></div>}
             <div ref={messagesEndRef} />

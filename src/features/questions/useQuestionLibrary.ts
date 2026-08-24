@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { llmApi } from '../../api/interviewApi'
 import { questionApi } from '../../api/questionApi'
-import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
+import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, QUESTION_VIEW_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
 import { parseImportedQuestions, parseQuestionOutline, sanitizeGeneratedAnswer } from '../questionImport'
 import type { Mastery, Question, QuestionCategory, QuestionDraft, QuestionEditorState, QuestionImporterState, QuestionRegeneratorState } from '../../types/question'
 
@@ -29,15 +29,40 @@ function loadQuestionImporter(): QuestionImporterState | null {
   }
 }
 
+type QuestionViewState = {
+  selectedId: string
+  query: string
+  category: string
+  difficulty: string
+  mastery: string
+}
+
+function loadQuestionView(): QuestionViewState {
+  const fallback = { selectedId: SEED_QUESTIONS[0].id, query: '', category: '全部分类', difficulty: '全部难度', mastery: '全部掌握度' }
+  try {
+    const value = JSON.parse(localStorage.getItem(QUESTION_VIEW_STORAGE_KEY) || '{}') as Partial<QuestionViewState>
+    return {
+      selectedId: typeof value.selectedId === 'string' ? value.selectedId : fallback.selectedId,
+      query: typeof value.query === 'string' ? value.query.slice(0, 200) : fallback.query,
+      category: typeof value.category === 'string' ? value.category : fallback.category,
+      difficulty: ['全部难度', '简单', '中等', '困难'].includes(String(value.difficulty)) ? String(value.difficulty) : fallback.difficulty,
+      mastery: ['全部掌握度', '未学习', '了解', '熟悉', '掌握'].includes(String(value.mastery)) ? String(value.mastery) : fallback.mastery,
+    }
+  } catch {
+    return fallback
+  }
+}
+
 export function useQuestionLibrary() {
+  const [initialView] = useState(loadQuestionView)
   const [questions, setQuestions] = useState<Question[]>(loadLocalQuestions)
   const [serverReady, setServerReady] = useState(false)
-  const [selectedId, setSelectedId] = useState(SEED_QUESTIONS[0].id)
+  const [selectedId, setSelectedId] = useState(initialView.selectedId)
   const [showAnswer, setShowAnswer] = useState(false)
-  const [query, setQuery] = useState('')
-  const [category, setCategory] = useState('全部分类')
-  const [difficulty, setDifficulty] = useState('全部难度')
-  const [mastery, setMastery] = useState('全部掌握度')
+  const [query, setQuery] = useState(initialView.query)
+  const [category, setCategory] = useState(initialView.category)
+  const [difficulty, setDifficulty] = useState(initialView.difficulty)
+  const [mastery, setMastery] = useState(initialView.mastery)
   const [editor, setEditor] = useState<QuestionEditorState | null>(null)
   const [importer, setImporter] = useState<QuestionImporterState | null>(loadQuestionImporter)
   const [regenerator, setRegenerator] = useState<QuestionRegeneratorState | null>(null)
@@ -60,6 +85,10 @@ export function useQuestionLibrary() {
   useEffect(() => {
     localStorage.setItem(QUESTION_STORAGE_KEY, JSON.stringify(questions))
   }, [questions])
+
+  useEffect(() => {
+    localStorage.setItem(QUESTION_VIEW_STORAGE_KEY, JSON.stringify({ selectedId, query, category, difficulty, mastery }))
+  }, [category, difficulty, mastery, query, selectedId])
 
   useEffect(() => {
     if (importer) localStorage.setItem(QUESTION_IMPORT_STORAGE_KEY, JSON.stringify(importer))
