@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { llmApi } from '../../api/interviewApi'
 import { questionApi } from '../../api/questionApi'
 import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
@@ -47,6 +47,16 @@ export function useQuestionLibrary() {
   const regenerateAbortController = useRef<AbortController | null>(null)
   const importerCleanupDone = useRef(false)
 
+  const refreshFromServer = useCallback(() => questionApi.list().then((payload) => {
+    setQuestions(payload.questions)
+    setSelectedId((current) => payload.questions.some((question) => question.id === current) ? current : payload.questions[0]?.id ?? '')
+    setServerReady(true)
+    return true
+  }).catch(() => {
+    setServerReady(false)
+    return false
+  }), [])
+
   useEffect(() => {
     localStorage.setItem(QUESTION_STORAGE_KEY, JSON.stringify(questions))
   }, [questions])
@@ -63,13 +73,13 @@ export function useQuestionLibrary() {
     if (drafts.some((draft, index) => draft.answer !== importer.drafts[index]?.answer)) setImporter({ ...importer, drafts })
   }, [importer])
 
+  useEffect(() => { void refreshFromServer() }, [refreshFromServer])
+
   useEffect(() => {
-    questionApi.list().then((payload) => {
-      setQuestions(payload.questions)
-      setSelectedId(payload.questions[0]?.id ?? '')
-      setServerReady(true)
-    }).catch(() => setServerReady(false))
-  }, [])
+    if (serverReady) return
+    const timer = window.setInterval(() => { void refreshFromServer() }, 15_000)
+    return () => window.clearInterval(timer)
+  }, [refreshFromServer, serverReady])
 
   useEffect(() => {
     questionApi.categories().then((payload) => setCategoryCatalog(payload.categories)).catch(() => {})
@@ -85,9 +95,15 @@ export function useQuestionLibrary() {
       && (mastery === '全部掌握度' || question.mastery === mastery)
   }), [category, difficulty, mastery, query, questions])
 
-  const updateMastery = (questionId: string, nextMastery: Mastery) => {
-    setQuestions((current) => current.map((question) => question.id === questionId ? { ...question, mastery: nextMastery } : question))
-    if (serverReady) questionApi.update(questionId, { mastery: nextMastery }).catch(() => setServerReady(false))
+  const updateMastery = async (questionId: string, nextMastery: Mastery) => {
+    try {
+      const { question } = await questionApi.update(questionId, { mastery: nextMastery })
+      setQuestions((current) => current.map((item) => item.id === questionId ? question : item))
+      setServerReady(true)
+    } catch {
+      setServerReady(false)
+      window.alert('保存失败，SQLite 服务暂不可用；本次修改未写入。')
+    }
   }
 
   const openEditor = (question?: Question) => {
@@ -141,31 +157,42 @@ export function useQuestionLibrary() {
       : [...current, { id: `local-${normalized}`, name: normalized, sortOrder: current.length, questionCount: 0 }])
   }
 
-  const saveQuestion = () => {
+  const saveQuestion = async () => {
     if (!editor || !editor.draft.title.trim() || !editor.draft.category.trim()) return
-    if (editor.mode === 'edit' && selected) {
-      setQuestions((current) => current.map((question) => question.id === selected.id ? { ...question, ...editor.draft } : question))
-      registerCategoryLocally(editor.draft.category)
-      if (serverReady) void questionApi.update(selected.id, editor.draft).catch(() => setServerReady(false))
-    } else {
-      const temporary: Question = { ...editor.draft, id: crypto.randomUUID(), mastery: '未学习' }
-      setQuestions((current) => [temporary, ...current])
-      registerCategoryLocally(editor.draft.category)
-      setSelectedId(temporary.id)
-      if (serverReady) void questionApi.create([editor.draft]).then((payload) => {
-        const created = payload.questions[0]
-        if (created) setQuestions((current) => [created, ...current.filter((item) => item.id !== temporary.id)])
-      }).catch(() => setServerReady(false))
+    try {
+      if (editor.mode === 'edit' && selected) {
+        const { question } = await questionApi.update(selected.id, editor.draft)
+        setQuestions((current) => current.map((item) => item.id === selected.id ? question : item))
+        registerCategoryLocally(question.category)
+      } else {
+        const { questions: created } = await questionApi.create([editor.draft])
+        const question = created[0]
+        if (question) {
+          setQuestions((current) => [question, ...current])
+          setSelectedId(question.id)
+          registerCategoryLocally(question.category)
+        }
+      }
+      setServerReady(true)
+      setEditor(null)
+    } catch {
+      setServerReady(false)
+      window.alert('保存失败，SQLite 服务暂不可用；编辑内容仍保留在窗口中。')
     }
-    setEditor(null)
   }
 
-  const deleteQuestion = () => {
+  const deleteQuestion = async () => {
     if (!selected || !window.confirm('确认删除这道题目？此操作无法撤销。')) return
-    const nextQuestions = questions.filter((question) => question.id !== selected.id)
-    setQuestions(nextQuestions)
-    setSelectedId(nextQuestions[0]?.id ?? '')
-    if (serverReady) void questionApi.remove(selected.id).catch(() => setServerReady(false))
+    try {
+      await questionApi.remove(selected.id)
+      const nextQuestions = questions.filter((question) => question.id !== selected.id)
+      setQuestions(nextQuestions)
+      setSelectedId(nextQuestions[0]?.id ?? '')
+      setServerReady(true)
+    } catch {
+      setServerReady(false)
+      window.alert('删除失败，SQLite 服务暂不可用；题目未删除。')
+    }
   }
 
   const importPreview = () => {
@@ -234,29 +261,32 @@ export function useQuestionLibrary() {
     setImporter(null)
   }
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!importer?.drafts.length) return
     const incomplete = importer.drafts.filter((draft) => !draft.title.trim() || !draft.answer.trim() || !draft.explanation.trim() || !draft.interviewAnswer.trim())
     if (incomplete.length) {
       setImporter({ ...importer, error: `还有 ${incomplete.length} 道题目的答案、解析或建议回答为空，请补充后再导入。` })
       return
     }
-    const imported: Question[] = importer.drafts.map((draft) => ({ ...draft, id: crypto.randomUUID(), mastery: '未学习' }))
-    setQuestions((current) => [...imported, ...current])
-    setCategoryCatalog((current) => {
-      const known = new Set(current.map((item) => item.name))
-      const additions = Array.from(new Set(imported.map((item) => item.category).filter((item) => item && !known.has(item))))
-        .map((name, index) => ({ id: `local-${name}`, name, sortOrder: current.length + index, questionCount: 0 }))
-      return [...current, ...additions]
-    })
-    setSelectedId(imported[0].id)
-    if (serverReady) void questionApi.create(importer.drafts).then((payload) => {
-      setQuestions((current) => [...payload.questions, ...current.filter((item) => !imported.some((created) => created.id === item.id))])
+    setImporter({ ...importer, processing: true, error: '' })
+    try {
+      const payload = await questionApi.create(importer.drafts)
+      setQuestions((current) => [...payload.questions, ...current])
       const counts = new Map<string, number>()
       payload.questions.forEach((question) => counts.set(question.category, (counts.get(question.category) || 0) + 1))
-      setCategoryCatalog((current) => current.map((item) => counts.has(item.name) ? { ...item, questionCount: item.questionCount + (counts.get(item.name) || 0) } : item))
-    }).catch(() => setServerReady(false))
-    setImporter(null)
+      setCategoryCatalog((current) => {
+        const known = new Set(current.map((item) => item.name))
+        const additions = Array.from(counts.keys()).filter((name) => !known.has(name))
+          .map((name, index) => ({ id: `local-${name}`, name, sortOrder: current.length + index, questionCount: counts.get(name) || 0 }))
+        return [...current.map((item) => counts.has(item.name) ? { ...item, questionCount: item.questionCount + (counts.get(item.name) || 0) } : item), ...additions]
+      })
+      setSelectedId(payload.questions[0]?.id ?? selectedId)
+      setServerReady(true)
+      setImporter(null)
+    } catch (error) {
+      setServerReady(false)
+      setImporter((current) => current ? { ...current, processing: false, error: error instanceof Error ? error.message : '写入 SQLite 失败，请重试。' } : current)
+    }
   }
 
   const runRegeneration = async (sourceQuestions: Question[], existingDrafts: QuestionDraft[]) => {

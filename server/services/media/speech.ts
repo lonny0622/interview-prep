@@ -1,30 +1,22 @@
-import { spawn } from 'node:child_process'
+import { runBoundedCommand } from './process.js'
 
 type SpeechConfig = {
   baseUrl: string
   model: string
   apiKey: string
   ffmpegPath: string
+  requestTimeoutMs: number
 }
 
-function convertToWav(binary: Buffer, mimeType: string, ffmpegPath: string): Promise<Buffer> {
+async function convertToWav(binary: Buffer, mimeType: string, ffmpegPath: string): Promise<Buffer> {
   if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav' || mimeType === 'audio/wave') return Promise.resolve(binary)
-  return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'])
-    const output: Buffer[] = []
-    const errors: Buffer[] = []
-    child.stdout.on('data', (chunk: Buffer) => output.push(chunk))
-    child.stderr.on('data', (chunk: Buffer) => errors.push(chunk))
-    child.on('error', (error) => reject(new Error(`音频格式转换失败，请确认已安装 ffmpeg（${error.message}）。`)))
-    child.on('close', (code) => {
-      if (code === 0 && output.length) {
-        resolve(Buffer.concat(output))
-        return
-      }
-      reject(new Error(`音频格式转换失败：${Buffer.concat(errors).toString('utf8').trim() || `ffmpeg 退出码 ${code}`}。`))
-    })
-    child.stdin.end(binary)
+  const { stdout } = await runBoundedCommand(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'], {
+    input: binary,
+    timeoutMs: 30_000,
+    maxOutputBytes: 25_000_000,
   })
+  if (!stdout.length) throw new Error('音频格式转换没有产生有效输出。')
+  return stdout
 }
 
 /** 将浏览器录音规范化为 WAV 后调用 OpenAI-compatible STT 接口。 */
@@ -40,6 +32,7 @@ export async function transcribeAudio(audioBase64: string, mimeType = 'audio/web
     method: 'POST',
     headers: { Authorization: `Bearer ${config.apiKey}` },
     body: form,
+    signal: AbortSignal.timeout(config.requestTimeoutMs),
   })
   const payload = await response.json().catch(() => ({})) as { error?: { message?: string }; text?: unknown }
   if (!response.ok) throw new Error(payload.error?.message || `语音转写请求失败（${response.status}）。`)

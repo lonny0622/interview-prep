@@ -58,7 +58,7 @@ export function AppSidebar({ activePage, learningTodoCount, serverReady, aiHisto
     </nav>
     <div className="sidebar-bottom">
       <button type="button" onClick={onOpenProfile}><Settings size={15} />设置</button>
-      <div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '本地数据模式'}</div>
+      <div className="sync-status"><span />{serverReady ? 'SQLite 已连接' : '服务暂不可用（只读缓存）'}</div>
       <div className="sync-status"><span />{llmStatus ? `LLM endpoint 已配置 · ${llmConfig.model}` : 'LLM 待配置'}</div>
     </div>
   </aside>

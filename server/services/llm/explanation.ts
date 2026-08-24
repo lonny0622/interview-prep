@@ -7,7 +7,7 @@ const SYSTEM_PROMPT = `你是一个面试学习助手。用户正在查看题库
 如果用户的问题与选中文字无关，也要明确指出关联性，并把回答拉回当前题目上下文。
 不要重复整道题的答案，不要输出 JSON，不要使用代码围栏包裹整篇回答。`
 
-export async function* explainSelectionStream(input: ExplainSelectionInput, config: ChatClientConfig): AsyncGenerator<string> {
+export async function* explainSelectionStream(input: ExplainSelectionInput, config: ChatClientConfig, signal?: AbortSignal): AsyncGenerator<string> {
   const history = input.history.slice(-10).map((message) => ({ role: message.role, content: message.content }))
   const context = JSON.stringify({
     question: input.question,
@@ -24,5 +24,5 @@ export async function* explainSelectionStream(input: ExplainSelectionInput, conf
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: context },
     ],
-  }, config)
+  }, config, signal)
 }

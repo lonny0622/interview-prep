@@ -57,10 +57,17 @@ export function saveInterviewTurn(sessionId: string, turn: SaveInterviewTurnInpu
   const session = getInterviewSession(sessionId)
   if (!session) return null
   const id = crypto.randomUUID()
-  database.prepare('INSERT INTO interview_turns (id, session_id, stage, question, answer_text, score_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, sessionId, turn.stage, turn.question, turn.answerText || '', score ? JSON.stringify(score) : null, now())
   const nextIndex = Math.min(session.currentIndex + 1, Math.max(0, session.blueprint.length - 1))
   const nextStage = session.blueprint[nextIndex]?.stage || 'candidate_questions'
-  database.prepare('UPDATE interview_sessions SET current_index = ?, stage = ?, updated_at = ? WHERE id = ?').run(nextIndex, nextStage, now(), sessionId)
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    database.prepare('INSERT INTO interview_turns (id, session_id, stage, question, answer_text, score_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, sessionId, turn.stage, turn.question, turn.answerText || '', score ? JSON.stringify(score) : null, now())
+    database.prepare('UPDATE interview_sessions SET current_index = ?, stage = ?, updated_at = ? WHERE id = ?').run(nextIndex, nextStage, now(), sessionId)
+    database.exec('COMMIT')
+  } catch (error) {
+    database.exec('ROLLBACK')
+    throw error
+  }
   return { id, sessionId, stage: turn.stage, question: turn.question, answerText: turn.answerText || '', score: score || null }
 }
 

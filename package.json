@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:client": "vite",
     "auth:hash": "node scripts/hash-password.mjs",
+    "backup": "pnpm gateway:build && node dist-server/backup.js",
     "start": "node dist-server/gateway.js",
     "gateway": "pnpm gateway:build && node dist-server/gateway.js",
     "gateway:build": "tsc -p tsconfig.server.json",

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runBoundedCommand } from './process.js'
 
 type TemporaryDocument = {
   directory: string
@@ -19,69 +19,47 @@ function removeTemporaryDocument(directory: string) {
   rmSync(directory, { recursive: true, force: true })
 }
 
-function extractDocxText(binary: Buffer): Promise<string> {
+async function extractDocxText(binary: Buffer): Promise<string> {
   const temporary = writeTemporaryDocument('docx', binary)
-  const unzip = spawn('unzip', ['-p', temporary.inputPath, 'word/document.xml'])
-  return new Promise((resolve, reject) => {
-    const output: Buffer[] = []
-    const errors: Buffer[] = []
-    unzip.stdout.on('data', (chunk: Buffer) => output.push(chunk))
-    unzip.stderr.on('data', (chunk: Buffer) => errors.push(chunk))
-    unzip.on('error', (error) => {
-      removeTemporaryDocument(temporary.directory)
-      reject(error)
-    })
-    unzip.on('close', (code) => {
-      if (code !== 0) {
-        removeTemporaryDocument(temporary.directory)
-        reject(new Error(`DOCX 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`))
-        return
-      }
-      const xml = Buffer.concat(output).toString('utf8')
-      removeTemporaryDocument(temporary.directory)
-      resolve(xml
-        .replace(/<w:tab\s*\/?>(\s*)/g, '\t')
-        .replace(/<w:br\s*\/?>(\s*)/g, '\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/\s+\n/g, '\n')
-        .trim())
-    })
-  })
+  try {
+    const { stdout } = await runBoundedCommand('unzip', ['-p', temporary.inputPath, 'word/document.xml'], { timeoutMs: 15_000, maxOutputBytes: 5_000_000 })
+    return stdout.toString('utf8')
+      .replace(/<w:tab\s*\/?>(\s*)/g, '\t')
+      .replace(/<w:br\s*\/?>(\s*)/g, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+\n/g, '\n')
+      .trim()
+  } finally {
+    removeTemporaryDocument(temporary.directory)
+  }
 }
 
-function extractPdfText(binary: Buffer): Promise<string> {
+async function extractPdfText(binary: Buffer): Promise<string> {
   const temporary = writeTemporaryDocument('pdf', binary)
   const command = process.platform === 'darwin' ? 'textutil' : 'pdftotext'
   const args = process.platform === 'darwin' ? ['-convert', 'txt', '-stdout', temporary.inputPath] : [temporary.inputPath, '-']
-  const textutil = spawn(command, args)
-  return new Promise((resolve, reject) => {
-    const output: Buffer[] = []
-    const errors: Buffer[] = []
-    textutil.stdout.on('data', (chunk: Buffer) => output.push(chunk))
-    textutil.stderr.on('data', (chunk: Buffer) => errors.push(chunk))
-    textutil.on('error', (error) => {
-      removeTemporaryDocument(temporary.directory)
-      reject(error)
-    })
-    textutil.on('close', (code) => {
-      removeTemporaryDocument(temporary.directory)
-      if (code === 0) {
-        resolve(Buffer.concat(output).toString('utf8').trim())
-        return
-      }
-      reject(new Error(`PDF 解析失败：${Buffer.concat(errors).toString('utf8').trim()}`))
-    })
-  })
+  try {
+    const { stdout } = await runBoundedCommand(command, args, { timeoutMs: 20_000, maxOutputBytes: 3_000_000 })
+    return stdout.toString('utf8').trim()
+  } finally {
+    removeTemporaryDocument(temporary.directory)
+  }
 }
 
 /** 根据文件扩展名和 MIME 类型选择文档解析器，并统一限制可支持的格式。 */
 export async function extractResumeText(binary: Buffer, fileName: string, mimeType: string, _rootDir: string): Promise<string> {
   const lowerName = fileName.toLowerCase()
-  if (lowerName.endsWith('.docx') || mimeType.includes('wordprocessingml')) return extractDocxText(binary)
-  if (lowerName.endsWith('.pdf') || mimeType === 'application/pdf') return extractPdfText(binary)
+  if (lowerName.endsWith('.docx') || mimeType.includes('wordprocessingml')) {
+    if (binary.subarray(0, 2).toString('ascii') !== 'PK') throw new Error('DOCX 文件头无效。')
+    return extractDocxText(binary)
+  }
+  if (lowerName.endsWith('.pdf') || mimeType === 'application/pdf') {
+    if (binary.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('PDF 文件头无效。')
+    return extractPdfText(binary)
+  }
   if (lowerName.endsWith('.doc') || mimeType === 'application/msword') throw new Error('暂不支持旧版 .doc，请另存为 .docx 或 PDF 后上传。')
   throw new Error('仅支持 .docx 和 .pdf 简历文件。')
 }

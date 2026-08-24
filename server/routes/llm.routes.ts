@@ -10,8 +10,8 @@ type LlmServices = {
   callModel: (source: string) => Promise<QuestionDraft[]>
   normalizeQuestionOutline: (questions: unknown, category: string) => QuestionOutline[]
   enrichQuestionBatch: (questions: QuestionOutline[], category: string, context?: string) => Promise<QuestionDraft[]>
-  enrichQuestionBatchStream: (questions: QuestionOutline[], category: string, context?: string) => AsyncIterable<QuestionDraft[]>
-  explainSelectionStream?: (input: ExplainSelectionInput) => AsyncIterable<string>
+  enrichQuestionBatchStream: (questions: QuestionOutline[], category: string, context?: string, signal?: AbortSignal) => AsyncIterable<QuestionDraft[]>
+  explainSelectionStream?: (input: ExplainSelectionInput, signal?: AbortSignal) => AsyncIterable<string>
   scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
   fallbackScore: (question: ScoreQuestion, answer: string) => ScoreResult
 }
@@ -27,7 +27,7 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
   if (matchesRoute(request, 'GET', '/api/llm/health')) {
     if (!config.baseUrl || !config.model || !config.apiKey) { jsonResponse(response, 503, { ok: false, configured: false, provider: config.provider, model: config.model }); return true }
     try {
-      const upstream = await fetch(`${config.baseUrl}/v1/models`, { headers: { Authorization: `Bearer ${config.apiKey}` } })
+      const upstream = await fetch(`${config.baseUrl}/v1/models`, { headers: { Authorization: `Bearer ${config.apiKey}` }, signal: AbortSignal.timeout(10_000) })
       const payload = await upstream.json().catch(() => ({}))
       jsonResponse(response, upstream.ok ? 200 : 502, { ok: upstream.ok, configured: true, provider: config.provider, model: config.model, modelCount: Array.isArray(payload.data) ? payload.data.length : 0, error: payload.error?.message }); return true
     } catch (error) { jsonResponse(response, 502, { ok: false, configured: true, provider: config.provider, model: config.model, error: errorMessage(error) }); return true }
@@ -53,6 +53,9 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
   if (matchesRoute(request, 'POST', '/api/llm/enrich-questions/stream')) {
     let completed = 0
     let total = 0
+    const controller = new AbortController()
+    const abortUpstream = () => controller.abort()
+    response.once('close', abortUpstream)
     try {
       const body = await readJson<{ category?: string; questions?: unknown[]; context?: string }>(request, 2_000_000)
       const category = String(body.category || '未分类').trim() || '未分类'
@@ -66,7 +69,7 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
         'X-Accel-Buffering': 'no',
       })
       writeStreamEvent(response, { type: 'start', total, model: config.importModel })
-      for await (const drafts of services.enrichQuestionBatchStream(outlines, category, context)) {
+      for await (const drafts of services.enrichQuestionBatchStream(outlines, category, context, controller.signal)) {
         // IncomingMessage 在请求体正常读取完成后也可能进入 destroyed 状态；这里只能
         // 根据响应端判断浏览器是否已断开，否则会吞掉首批结果并让连接永久悬挂。
         if (response.destroyed || response.writableEnded) return true
@@ -84,10 +87,15 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
         response.end()
       }
       return true
+    } finally {
+      response.off('close', abortUpstream)
     }
   }
   if (matchesRoute(request, 'POST', '/api/llm/explain-selection/stream')) {
     let started = false
+    const controller = new AbortController()
+    const abortUpstream = () => controller.abort()
+    response.once('close', abortUpstream)
     try {
       if (!services.explainSelectionStream) { jsonResponse(response, 503, { error: '选区解释服务尚未配置。' }); return true }
       const body = await readJson<Partial<ExplainSelectionInput>>(request, 700_000)
@@ -122,7 +130,7 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
             ? [{ role: value.role as 'user' | 'assistant', content: String(value.content || '').slice(0, 6_000) }]
             : []
         }).slice(-10),
-      })) {
+      }, controller.signal)) {
         if (response.destroyed || response.writableEnded) return true
         writeStreamEvent(response, { type: 'delta', content })
       }
@@ -134,6 +142,8 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
       if (!started && !response.headersSent) jsonResponse(response, 502, { error: message })
       else if (!response.writableEnded) { writeStreamEvent(response, { type: 'error', error: message }); response.end() }
       return true
+    } finally {
+      response.off('close', abortUpstream)
     }
   }
   if (matchesRoute(request, 'POST', '/api/score-answer')) {

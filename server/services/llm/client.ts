@@ -13,12 +13,14 @@ type ChatChunk = {
 }
 
 /** 单一上游模型入口，集中处理鉴权、超时和 OpenAI-compatible 错误。 */
-export async function completeChat(request: Omit<ChatRequest, 'model'> & { model?: string }, config: ChatClientConfig = appConfig): Promise<string> {
+export async function completeChat(request: Omit<ChatRequest, 'model'> & { model?: string }, config: ChatClientConfig = appConfig, signal?: AbortSignal): Promise<string> {
   const model = request.model || appConfig.model
   if (!config.baseUrl || !model || !config.apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs)
+  const forwardAbort = () => controller.abort()
+  signal?.addEventListener('abort', forwardAbort, { once: true })
   try {
     const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -36,6 +38,7 @@ export async function completeChat(request: Omit<ChatRequest, 'model'> & { model
     throw error
   } finally {
     clearTimeout(timeout)
+    signal?.removeEventListener('abort', forwardAbort)
   }
 }
 

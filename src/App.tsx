@@ -27,7 +27,6 @@ function App() {
     activePage,
     questions: library.questions,
     setQuestions: library.setQuestions,
-    serverReady: library.serverReady,
     setServerReady: library.setServerReady,
   })
   const practice = usePracticeSession(library.questions)

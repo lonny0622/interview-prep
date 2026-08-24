@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 const scrypt = promisify(scryptCallback)
 const COST = 32_768
 const BLOCK_SIZE = 8
-const PARALLELIZATION = 1
+const PARALLELIZATION = 3
 const HASH_LENGTH = 64
 
 function readHidden(prompt) {

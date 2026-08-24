@@ -22,7 +22,15 @@ export function saveLearningProgress(questionId: string, mastery: Mastery, sessi
   if (!question) return null
   const id = crypto.randomUUID()
   const learnedAt = now()
-  database.prepare('INSERT INTO learning_progress (id, question_id, session_id, mastery, learned_at) VALUES (?, ?, ?, ?, ?)').run(id, questionId, sessionId || null, mastery, learnedAt)
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    database.prepare('UPDATE questions SET mastery = ?, updated_at = ? WHERE id = ?').run(mastery, learnedAt, questionId)
+    database.prepare('INSERT INTO learning_progress (id, question_id, session_id, mastery, learned_at) VALUES (?, ?, ?, ?, ?)').run(id, questionId, sessionId || null, mastery, learnedAt)
+    database.exec('COMMIT')
+  } catch (error) {
+    database.exec('ROLLBACK')
+    throw error
+  }
   return { id, questionId, sessionId: sessionId || null, mastery, learnedAt }
 }
 

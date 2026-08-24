@@ -1,8 +1,12 @@
 import { database } from './connection.js'
 
-/** 开发阶段使用全新 schema，不再包含旧版本数据迁移分支。 */
-database.exec(`
-  PRAGMA journal_mode = WAL;
+database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;')
+
+const version = Number((database.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined)?.user_version || 0)
+
+/** Every migration is idempotent and committed before repositories prepare statements. */
+if (version < 1) database.exec(`
+  BEGIN IMMEDIATE;
   CREATE TABLE IF NOT EXISTS questions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -108,4 +112,35 @@ database.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  PRAGMA user_version = 1;
+  COMMIT;
+`)
+
+if (version < 2) database.exec(`
+  BEGIN IMMEDIATE;
+  CREATE TABLE IF NOT EXISTS auth_login_attempts (
+    key TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL,
+    window_started_at INTEGER NOT NULL,
+    blocked_until INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS auth_active_session (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    session_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  PRAGMA user_version = 2;
+  COMMIT;
+`)
+
+if (version < 3) database.exec(`
+  BEGIN IMMEDIATE;
+  CREATE INDEX IF NOT EXISTS idx_questions_category ON questions(category COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_learning_progress_question ON learning_progress(question_id, learned_at);
+  CREATE INDEX IF NOT EXISTS idx_interview_turns_session ON interview_turns(session_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_resumes_job ON resumes(job_profile_id, created_at);
+  PRAGMA user_version = 3;
+  COMMIT;
 `)

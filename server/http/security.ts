@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { isIP } from 'node:net'
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -30,8 +31,11 @@ export function requestClientAddress(request: IncomingMessage, trustProxy: boole
   if (trustProxy) {
     const forwarded = request.headers['x-forwarded-for']
     const value = Array.isArray(forwarded) ? forwarded[0] : forwarded
-    const first = value?.split(',')[0]?.trim()
-    if (first) return first.slice(0, 128)
+    // Coolify's edge proxy appends the actual peer to the right. Taking the last
+    // valid address prevents a client-prepended value from bypassing rate limits.
+    const addresses = value?.split(',').map((item) => item.trim()).filter((item) => isIP(item))
+    const nearest = addresses?.at(-1)
+    if (nearest) return nearest
   }
   return request.socket.remoteAddress || 'unknown'
 }

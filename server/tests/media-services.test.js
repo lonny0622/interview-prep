@@ -14,7 +14,7 @@ describe('media services', () => {
 
   it('rejects empty recordings before contacting the speech provider', async () => {
     await assert.rejects(
-      transcribeAudio('', 'audio/webm', { baseUrl: 'https://example.test', model: 'stt', apiKey: 'test-key', ffmpegPath: 'ffmpeg' }),
+      transcribeAudio('', 'audio/webm', { baseUrl: 'https://example.test', model: 'stt', apiKey: 'test-key', ffmpegPath: 'ffmpeg', requestTimeoutMs: 1_000 }),
       /录音内容为空/,
     )
   })

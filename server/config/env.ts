@@ -46,6 +46,7 @@ export const appConfig = {
   sttModel: get('STT_MODEL'),
   sttApiKey: get('STT_API_KEY'),
   ffmpegPath: get('STT_FFMPEG_PATH', 'ffmpeg'),
+  sttRequestTimeoutMs: positiveNumber('STT_REQUEST_TIMEOUT_MS', 90_000),
   port: positiveNumber('PORT', positiveNumber('LLM_GATEWAY_PORT', 8787)),
   requestTimeoutMs: positiveNumber('LLM_REQUEST_TIMEOUT_MS', 90000),
   auth: {
@@ -60,5 +61,6 @@ export const appConfig = {
     secureCookie: booleanValue('AUTH_COOKIE_SECURE', isProduction),
     trustProxy: booleanValue('TRUST_PROXY', isProduction),
     appOrigin: get('APP_ORIGIN').replace(/\/$/, ''),
+    allowedIps: get('AUTH_ALLOWED_IPS').split(',').map((value) => value.trim()).filter(Boolean),
   },
 } as const

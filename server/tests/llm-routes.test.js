@@ -7,6 +7,7 @@ function createRequest(body) {
   const request = new EventEmitter()
   request.method = 'POST'
   request.url = '/api/llm/enrich-questions/stream'
+  request.headers = {}
   request.destroyed = false
   request.setEncoding = () => {}
   globalThis.queueMicrotask(() => {
@@ -19,6 +20,7 @@ function createRequest(body) {
 }
 
 function createResponse() {
+  const events = new EventEmitter()
   return {
     body: '',
     destroyed: false,
@@ -26,6 +28,8 @@ function createResponse() {
     headersSent: false,
     statusCode: 0,
     headers: {},
+    once: events.once.bind(events),
+    off: events.off.bind(events),
     writeHead(statusCode, headers) {
       this.statusCode = statusCode
       this.headers = headers

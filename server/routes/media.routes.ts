@@ -16,7 +16,8 @@ export async function handleMediaRoutes(request: IncomingMessage, response: Serv
     try {
       const body = await readJson<{ fileBase64?: string; fileName?: string; mimeType?: string }>(request, 12_000_000)
       if (typeof body.fileBase64 !== 'string' || !body.fileBase64.trim()) { jsonResponse(response, 400, { error: 'fileBase64 不能为空。' }); return true }
-      const text = await services.extractResumeText(Buffer.from(body.fileBase64, 'base64'), String(body.fileName || ''), String(body.mimeType || ''))
+      const binary = decodeBase64(body.fileBase64, 8_000_000)
+      const text = await services.extractResumeText(binary, String(body.fileName || ''), String(body.mimeType || ''))
       if (!text) { jsonResponse(response, 422, { error: '文档中没有提取到文本，请改用粘贴文本。' }); return true }
       jsonResponse(response, 200, { text: text.slice(0, 80_000), fileName: body.fileName }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '简历解析失败。') }); return true }
@@ -25,8 +26,18 @@ export async function handleMediaRoutes(request: IncomingMessage, response: Serv
     try {
       const body = await readJson<{ audioBase64?: string; mimeType?: string }>(request, 15_000_000)
       if (typeof body.audioBase64 !== 'string' || !body.audioBase64.trim()) { jsonResponse(response, 400, { error: 'audioBase64 不能为空。' }); return true }
+      decodeBase64(body.audioBase64, 10_000_000)
       jsonResponse(response, 200, { text: await services.transcribeAudio(body.audioBase64, body.mimeType), model: config.sttModel }); return true
     } catch (error) { jsonResponse(response, 502, { error: errorMessage(error, '语音转写失败。') }); return true }
   }
   return false
+}
+
+function decodeBase64(value: string, maxBytes: number): Buffer {
+  const normalized = value.replace(/\s/g, '')
+  if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) throw new Error('文件内容不是合法 Base64。')
+  const binary = Buffer.from(normalized, 'base64')
+  if (!binary.length) throw new Error('文件内容为空。')
+  if (binary.length > maxBytes) throw new Error(`文件超过 ${Math.round(maxBytes / 1_000_000)}MB 限制。`)
+  return binary
 }

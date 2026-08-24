@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export type SessionPayload = {
   sub: string
+  sid: string
   iat: number
   exp: number
   version: string
@@ -15,10 +16,11 @@ function sessionVersion(passwordHash: string): string {
   return createHmac('sha256', passwordHash).update('interviewprep-session-version').digest('base64url').slice(0, 22)
 }
 
-export function createSessionToken(username: string, passwordHash: string, secret: string, ttlSeconds: number, now = Date.now()): string {
+export function createSessionToken(username: string, sessionId: string, passwordHash: string, secret: string, ttlSeconds: number, now = Date.now()): string {
   const issuedAt = Math.floor(now / 1_000)
   const payload: SessionPayload = {
     sub: username,
+    sid: sessionId,
     iat: issuedAt,
     exp: issuedAt + ttlSeconds,
     version: sessionVersion(passwordHash),
@@ -38,7 +40,7 @@ export function verifySessionToken(token: string, username: string, passwordHash
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<SessionPayload>
     const nowSeconds = Math.floor(now / 1_000)
-    if (payload.sub !== username || payload.version !== sessionVersion(passwordHash)) return null
+    if (payload.sub !== username || typeof payload.sid !== 'string' || payload.sid.length < 20 || payload.version !== sessionVersion(passwordHash)) return null
     if (!Number.isInteger(payload.iat) || !Number.isInteger(payload.exp)) return null
     if ((payload.iat as number) > nowSeconds + 60 || (payload.exp as number) <= nowSeconds) return null
     return payload as SessionPayload

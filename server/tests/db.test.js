@@ -68,6 +68,15 @@ describe('question repository', () => {
     assert.deepEqual(updated.followUps, ['新追问'])
     assert.equal(db.removeQuestion(created.id), true)
   })
+
+  it('updates mastery and records learning progress atomically', () => {
+    const question = db.listQuestions()[0]
+    const progress = db.saveLearningProgress(question.id, '掌握')
+
+    assert.equal(progress.mastery, '掌握')
+    assert.equal(db.getQuestion(question.id).mastery, '掌握')
+    assert.ok(db.getLearningStats().todayLearned >= 1)
+  })
 })
 
 describe('profile repository', () => {

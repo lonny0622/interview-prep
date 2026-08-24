@@ -32,6 +32,11 @@ export function isValidPasswordHash(encoded: string): boolean {
   return parsePasswordHash(encoded) !== null
 }
 
+export function isRecommendedPasswordHash(encoded: string): boolean {
+  const parameters = parsePasswordHash(encoded)
+  return Boolean(parameters && parameters.blockSize >= 8 && parameters.cost * parameters.parallelization >= 98_304)
+}
+
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {
   const parameters = parsePasswordHash(encoded)
   if (!parameters) return false
@@ -44,6 +49,22 @@ export async function verifyPassword(password: string, encoded: string): Promise
     }, (error, key) => error ? reject(error) : resolve(key))
   })
   return timingSafeEqual(actual, parameters.expected)
+}
+
+const verificationQueue: Array<() => void> = []
+let activeVerifications = 0
+const MAX_CONCURRENT_VERIFICATIONS = 2
+
+/** Bound concurrent memory-hard checks so a burst cannot exhaust a small VPS. */
+export async function verifyPasswordBounded(password: string, encoded: string): Promise<boolean> {
+  if (activeVerifications >= MAX_CONCURRENT_VERIFICATIONS) await new Promise<void>((resolve) => verificationQueue.push(resolve))
+  activeVerifications += 1
+  try {
+    return await verifyPassword(password, encoded)
+  } finally {
+    activeVerifications -= 1
+    verificationQueue.shift()?.()
+  }
 }
 
 /** Avoid leaking whether the submitted username matches the only configured account. */

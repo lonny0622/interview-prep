@@ -77,11 +77,11 @@ export async function parseQuestionSource(source: string, model: string): Promis
   return normalizeDrafts(extractJsonArray(content, '模型返回的题目不是有效 JSON。'))
 }
 
-type EnrichQuestionChunk = (outlines: QuestionOutline[], category: string, model: string, context?: string) => Promise<QuestionDraft[]>
+type EnrichQuestionChunk = (outlines: QuestionOutline[], category: string, model: string, context?: string, signal?: AbortSignal) => Promise<QuestionDraft[]>
 const QUESTION_CHUNK_SIZE = 3
 const SINGLE_QUESTION_ATTEMPTS = 2
 
-async function enrichQuestionChunk(outlines: QuestionOutline[], category: string, model: string, context = ''): Promise<QuestionDraft[]> {
+async function enrichQuestionChunk(outlines: QuestionOutline[], category: string, model: string, context = '', signal?: AbortSignal): Promise<QuestionDraft[]> {
   const projectInstruction = context
     ? '对于项目经历、工程实践或场景类问题，只能依据 projectContext 中的事实生成参考回答；没有证据的能力必须明确说“仓库中未确认”，不要虚构上线效果、事故、指标、团队规模或个人贡献。'
     : ''
@@ -93,7 +93,7 @@ async function enrichQuestionChunk(outlines: QuestionOutline[], category: string
       { role: 'system', content: `你是一名资深 React Native 面试教练和题库编辑。只输出 JSON 数组，不要代码围栏。字段结构：${enrichedQuestionSchema}。技术背景以当前主流 React Native + TypeScript 为准，覆盖 React Native 0.7x/0.8x、Hermes、新架构 Fabric/TurboModules/JSI 等能力时必须说明版本或适用边界，不能把已经废弃的方案当成唯一正确答案。answer 只写直接答案，控制在 1-3 段或不超过 5 个要点，禁止出现“核心结论”“详细解析”“速记”等小节，禁止复制 explanation。explanation 才负责展开原理、原因、示例和边界，必须使用 Markdown 且严格包含“## 核心结论”“## 详细解析”“## 速记”三个小节。建议回答要短、自然、可直接在面试中复述，抓住定义、原理和一个关键取舍。每道题生成 2-4 个发散问题。严格按照输入题目顺序返回，title 必须原样保留，不得漏题、合并题目或虚构与题目无关的内容。${projectInstruction}` },
       { role: 'user', content: JSON.stringify({ category, questions: outlines, ...(context ? { projectContext: context.slice(0, 16_000) } : {}) }) },
     ],
-  })
+  }, undefined, signal)
   const value = extractJsonArray<unknown>(content, '模型返回的题目不是有效 JSON。')
   if (value.length !== outlines.length) throw new Error(`模型返回 ${value.length} 道题，预期 ${outlines.length} 道。`)
   return outlines.map((outline, index) => {
@@ -128,12 +128,13 @@ export async function* enrichQuestionBatchStream(
   model: string,
   enrich: EnrichQuestionChunk = enrichQuestionChunk,
   context = '',
+  signal?: AbortSignal,
 ): AsyncGenerator<QuestionDraft[]> {
   const enrichOne = async (outline: QuestionOutline) => {
     let lastError: unknown
     for (let attempt = 0; attempt < SINGLE_QUESTION_ATTEMPTS; attempt += 1) {
       try {
-        return await enrich([outline], category, model, context)
+        return await enrich([outline], category, model, context, signal)
       } catch (error) {
         lastError = error
         if (attempt < SINGLE_QUESTION_ATTEMPTS - 1 && !/配置不完整/.test(errorMessage(error))) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
@@ -144,9 +145,10 @@ export async function* enrichQuestionBatchStream(
   }
 
   for (let index = 0; index < outlines.length; index += QUESTION_CHUNK_SIZE) {
+    signal?.throwIfAborted()
     const chunk = outlines.slice(index, index + QUESTION_CHUNK_SIZE)
     try {
-      yield await enrich(chunk, category, model, context)
+      yield await enrich(chunk, category, model, context, signal)
     } catch (error) {
       if (chunk.length === 1 || /配置不完整/.test(errorMessage(error))) throw error
       // 三题批次超时或返回格式不完整时，立即降级为逐题生成。成功的题目会继续

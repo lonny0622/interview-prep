@@ -24,7 +24,7 @@ describe('single-account authentication primitives', () => {
   it('rejects tampered and expired signed sessions', () => {
     const now = Date.UTC(2026, 7, 24)
     const hash = testPasswordHash('a-long-random-password')
-    const token = createSessionToken('owner', hash, 'a-session-secret-that-is-long-enough', 60, now)
+    const token = createSessionToken('owner', 'test-session-id-that-is-long-enough', hash, 'a-session-secret-that-is-long-enough', 60, now)
     assert.equal(verifySessionToken(token, 'owner', hash, 'a-session-secret-that-is-long-enough', now)?.sub, 'owner')
     assert.equal(verifySessionToken(`${token}x`, 'owner', hash, 'a-session-secret-that-is-long-enough', now), null)
     assert.equal(verifySessionToken(token, 'owner', hash, 'a-session-secret-that-is-long-enough', now + 61_000), null)
