@@ -95,6 +95,7 @@ AUTH_PASSWORD_HASH=pnpm auth:hash 输出的完整内容
 SESSION_SECRET=openssl rand -base64 48 的输出
 APP_ORIGIN=https://interview.example.com
 TRUST_PROXY=true
+AUTH_SESSION_TTL_SECONDS=2592000
 # 固定出口 IP 时才设置
 AUTH_ALLOWED_IPS=
 
@@ -111,7 +112,7 @@ STT_API_KEY=your-server-only-stt-key
 STT_REQUEST_TIMEOUT_MS=90000
 ```
 
-5. 部署后先访问 `https://你的域名/health`，应返回 `{"status":"ok"}`，随后再打开首页测试登录。健康检查同时验证 SQLite 可用性；收到 `SIGTERM` 后会先退出健康状态，再等待现有请求结束。不要设置 `AUTH_ENABLED=false` 或 `AUTH_COOKIE_SECURE=false`；生产启动时缺少账户、密码哈希、会话密钥或 `APP_ORIGIN` 会直接失败，避免误把未受保护的实例上线。
+5. 部署后先访问 `https://你的域名/health`，应返回 `{"status":"ok"}`，随后再打开首页测试登录。健康检查同时验证 SQLite 可用性；收到 `SIGTERM` 后会先退出健康状态，再等待现有请求结束。不要设置 `AUTH_ENABLED=false` 或 `AUTH_COOKIE_SECURE=false`；生产启动时缺少账户、密码哈希、会话密钥或 `APP_ORIGIN` 会直接失败，避免误把未受保护的实例上线。`AUTH_SESSION_TTL_SECONDS=2592000` 表示登录保持 30 天；修改后需要重新登录一次，新的 Cookie 才会获得完整有效期。
 
 在 Coolify 的环境变量 Normal View 中，将 `AUTH_PASSWORD_HASH` 勾选为 **Literal**，否则哈希中的 `$` 可能被当成变量引用。`AUTH_PASSWORD_HASH`、`SESSION_SECRET`、`LLM_API_KEY`、`STT_API_KEY` 都只需要 Runtime Variable，应关闭 Build Variable，避免秘密进入镜像构建参数；三个 `VITE_LLM_*` 变量保留 Build + Runtime，供前端状态展示和服务端运行时读取。
 

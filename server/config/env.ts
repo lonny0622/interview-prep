@@ -20,6 +20,7 @@ function readEnvFile(): Record<string, string> {
 const fileEnv = readEnvFile()
 const get = (name: string, fallback = '') => process.env[name] || fileEnv[name] || fallback
 const isProduction = get('NODE_ENV') === 'production'
+export const DEFAULT_AUTH_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 function booleanValue(name: string, fallback: boolean): boolean {
   const value = get(name)
@@ -54,7 +55,7 @@ export const appConfig = {
     username: get('AUTH_USERNAME').trim(),
     passwordHash: get('AUTH_PASSWORD_HASH'),
     sessionSecret: get('SESSION_SECRET'),
-    sessionTtlSeconds: positiveNumber('AUTH_SESSION_TTL_SECONDS', 43_200),
+    sessionTtlSeconds: positiveNumber('AUTH_SESSION_TTL_SECONDS', DEFAULT_AUTH_SESSION_TTL_SECONDS),
     maxAttempts: positiveNumber('AUTH_MAX_ATTEMPTS', 5),
     attemptWindowMs: positiveNumber('AUTH_ATTEMPT_WINDOW_SECONDS', 900) * 1_000,
     lockoutMs: positiveNumber('AUTH_LOCKOUT_SECONDS', 900) * 1_000,

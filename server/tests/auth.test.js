@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { scryptSync } from 'node:crypto'
 import { describe, it } from 'node:test'
+import { DEFAULT_AUTH_SESSION_TTL_SECONDS } from '../../dist-server/config/env.js'
 import { constantTimeTextEqual, verifyPassword } from '../../dist-server/auth/password.js'
 import { LoginAttemptLimiter } from '../../dist-server/auth/rate-limiter.js'
 import { createSessionToken, parseCookies, sessionCookie, verifySessionToken } from '../../dist-server/auth/session.js'
@@ -13,6 +14,10 @@ function testPasswordHash(password) {
 }
 
 describe('single-account authentication primitives', () => {
+  it('uses a 30-day default session lifetime', () => {
+    assert.equal(DEFAULT_AUTH_SESSION_TTL_SECONDS, 30 * 24 * 60 * 60)
+  })
+
   it('verifies the configured scrypt password without leaking username equality', async () => {
     const encoded = testPasswordHash('a-long-random-password')
     assert.equal(await verifyPassword('a-long-random-password', encoded), true)

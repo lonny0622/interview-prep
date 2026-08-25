@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { EXPLANATION_SYSTEM_PROMPT } from '../../dist-server/services/llm/explanation.js'
 import { enrichQuestionBatchStream, normalizeQuestionOutline, sanitizeEnrichedAnswer } from '../../dist-server/services/llm/questions.js'
 import { fallbackScore } from '../../dist-server/services/llm/scoring.js'
+
+describe('selection explanation prompt', () => {
+  it('treats the question as context instead of a knowledge boundary', () => {
+    assert.match(EXPLANATION_SYSTEM_PROMPT, /不是你的知识边界/)
+    assert.match(EXPLANATION_SYSTEM_PROMPT, /通用技术知识/)
+    assert.match(EXPLANATION_SYSTEM_PROMPT, /不能因为题目没有写明就拒绝回答/)
+    assert.doesNotMatch(EXPLANATION_SYSTEM_PROMPT, /请只基于题目内容/)
+  })
+})
 
 describe('question generation input', () => {
   it('normalizes titles, difficulty and category', () => {
