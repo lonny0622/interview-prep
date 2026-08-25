@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { EXPLANATION_SYSTEM_PROMPT } from '../../dist-server/services/llm/explanation.js'
-import { enrichQuestionBatchStream, normalizeQuestionOutline, sanitizeEnrichedAnswer } from '../../dist-server/services/llm/questions.js'
+import { enrichQuestionBatchStream, normalizeQuestionOutline, QUESTION_CATEGORY_GROUNDING_INSTRUCTION, QUESTION_IMPORTANCE_RUBRIC, sanitizeEnrichedAnswer } from '../../dist-server/services/llm/questions.js'
 import { fallbackScore } from '../../dist-server/services/llm/scoring.js'
 
 describe('selection explanation prompt', () => {
@@ -14,6 +14,19 @@ describe('selection explanation prompt', () => {
 })
 
 describe('question generation input', () => {
+  it('treats category as the authoritative semantic domain', () => {
+    assert.match(QUESTION_CATEGORY_GROUNDING_INSTRUCTION, /category 是每道题不可更改的首要专业语境/)
+    assert.match(QUESTION_CATEGORY_GROUNDING_INSTRUCTION, /不得因为其他领域存在同名概念就切换语境/)
+    assert.match(QUESTION_CATEGORY_GROUNDING_INSTRUCTION, /必须直接回应 title/)
+  })
+
+  it('defines an independent 1-5 importance rubric instead of copying the schema example', () => {
+    assert.match(QUESTION_IMPORTANCE_RUBRIC, /5=核心高频且必须掌握/)
+    assert.match(QUESTION_IMPORTANCE_RUBRIC, /1=非常边缘/)
+    assert.match(QUESTION_IMPORTANCE_RUBRIC, /不能照抄 JSON 示例/)
+    assert.match(QUESTION_IMPORTANCE_RUBRIC, /不能简单等同于 difficulty/)
+  })
+
   it('normalizes titles, difficulty and category', () => {
     assert.deepEqual(normalizeQuestionOutline([
       { question: '  React key 有什么作用？  ', difficulty: '未知', category: 'React' },

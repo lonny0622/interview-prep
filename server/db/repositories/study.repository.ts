@@ -34,12 +34,12 @@ export function saveLearningProgress(questionId: string, mastery: Mastery, sessi
   return { id, questionId, sessionId: sessionId || null, mastery, learnedAt }
 }
 
-export function getLearningStats(): LearningStats {
+export function getLearningStats(since?: string): LearningStats {
   const mastery = emptyMastery()
   for (const row of database.prepare('SELECT mastery, COUNT(*) AS count FROM questions GROUP BY mastery').all() as MasteryCountRow[]) mastery[row.mastery] = Number(row.count)
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
-  const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(startOfToday.toISOString())?.count ?? 0)
+  const todayLearned = Number(database.prepare('SELECT COUNT(DISTINCT question_id) AS count FROM learning_progress WHERE learned_at >= ?').get(since || startOfToday.toISOString())?.count ?? 0)
   const totalQuestions = Number(database.prepare('SELECT COUNT(*) AS count FROM questions').get()?.count ?? 0)
   const categories = database.prepare(`SELECT category, mastery, COUNT(*) AS count FROM questions GROUP BY category, mastery ORDER BY category COLLATE NOCASE ASC`).all() as CategoryMasteryCountRow[]
   const categoryMap = new Map<string, CategoryLearningStats>()

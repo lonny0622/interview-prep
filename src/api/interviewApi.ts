@@ -2,7 +2,7 @@ import type { Question, QuestionDraft } from '../types/question'
 import type { InterviewNextAction, InterviewReport, InterviewSession, InterviewSetup, InterviewTurn, SaveInterviewTurnInput, ScoreResult } from '../types/interview'
 import { apiRequest, streamJsonLines } from './http'
 
-type EnrichQuestionsInput = { category: string; questions: Array<{ title: string; difficulty: string }>; source?: string; context?: string }
+type EnrichQuestionsInput = { category: string; questions: Array<{ title: string; difficulty: string }>; context?: string }
 export type EnrichQuestionsProgress = { drafts: QuestionDraft[]; completed: number; total: number; status?: string; retrying?: boolean }
 type EnrichQuestionsEvent =
   | { type: 'start'; total: number }

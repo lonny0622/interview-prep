@@ -25,7 +25,13 @@ export async function handleStudyRoutes(request: IncomingMessage, response: Serv
       jsonResponse(response, progress ? 201 : 404, progress ? { progress } : { error: '题目不存在。' }); return true
     } catch (error) { jsonResponse(response, 400, { error: errorMessage(error, '学习记录保存失败。') }); return true }
   }
-  if (matchesRoute(request, 'GET', '/api/learning/stats')) { jsonResponse(response, 200, { stats: getLearningStats() }); return true }
+  if (matchesRoute(request, 'GET', '/api/learning/stats')) {
+    const sinceValue = new URL(request.url || '', 'http://localhost').searchParams.get('since')
+    const sinceDate = sinceValue ? new Date(sinceValue) : null
+    const since = sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate.toISOString() : undefined
+    jsonResponse(response, 200, { stats: getLearningStats(since) })
+    return true
+  }
   if (matchesRoute(request, 'POST', '/api/practice-sessions')) {
     try {
       const body = await readJson<{ questionIds?: unknown[]; filters?: Record<string, unknown> }>(request)

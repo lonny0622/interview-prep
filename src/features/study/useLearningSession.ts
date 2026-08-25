@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { studyApi } from '../../api/studyApi'
 import { EMPTY_LEARNING_FILTERS, MASTERY_ORDER } from '../../constants/questions'
 import type { AppPage } from '../../types/app'
@@ -36,6 +36,16 @@ export function useLearningSession({ activePage, questions, setQuestions, setSer
   const filterKey = `${filters.category}|${filters.difficulty}|${filters.mastery}|${learningQuestions.map((question) => question.id).join(',')}`
   const localStats = useMemo(() => calculateLearningStats(questions), [questions])
 
+  const refreshStats = useCallback(async () => {
+    try {
+      const payload = await studyApi.learningStats()
+      setRemoteStats(payload.stats)
+      setServerReady(true)
+    } catch {
+      setServerReady(false)
+    }
+  }, [setServerReady])
+
   useEffect(() => {
     if (activePage !== 'learning' || !learningQuestions.length || sessionCreatedFor === filterKey) return
     studyApi.createLearningSession(learningQuestions.map((question) => question.id), filters).then((payload) => {
@@ -45,8 +55,8 @@ export function useLearningSession({ activePage, questions, setQuestions, setSer
   }, [activePage, filterKey, filters, learningQuestions, sessionCreatedFor, setServerReady])
 
   useEffect(() => {
-    studyApi.learningStats().then((payload) => { setRemoteStats(payload.stats); setServerReady(true) }).catch(() => setServerReady(false))
-  }, [activePage, setServerReady])
+    void refreshStats()
+  }, [activePage, refreshStats])
 
   const changeFilters = (patch: Partial<LearningFilters>) => {
     setFilters((current) => ({ ...current, ...patch }))
@@ -62,9 +72,7 @@ export function useLearningSession({ activePage, questions, setQuestions, setSer
     try {
       await studyApi.saveLearningProgress(current.id, nextMastery, sessionId)
       setQuestions((items) => items.map((item) => item.id === current.id ? { ...item, mastery: nextMastery } : item))
-      const payload = await studyApi.learningStats()
-      setRemoteStats(payload.stats)
-      setServerReady(true)
+      await refreshStats()
     } catch {
       setServerReady(false)
       window.alert('学习进度保存失败，本次掌握度未写入。')
@@ -84,6 +92,7 @@ export function useLearningSession({ activePage, questions, setQuestions, setSer
     filters,
     changeFilters,
     markMastery,
+    refreshStats,
     reveal: () => setRevealAnswer(true),
     previous: () => { setIndex((current) => current - 1); setRevealAnswer(false) },
     next: () => { setIndex((current) => current + 1); setRevealAnswer(false) },

@@ -13,6 +13,7 @@ type Props = {
   category: string
   difficulty: string
   mastery: string
+  todayLearned: number
   showAnswer: boolean
   onQueryChange: (value: string) => void
   onCategoryChange: (value: string) => void
@@ -34,12 +35,14 @@ type Props = {
 
 export function LibraryPage(props: Props) {
   const {
-    questions, filteredQuestions, selected, selectedId, categories, query, category, difficulty, mastery,
+    questions, filteredQuestions, selected, selectedId, categories, query, category, difficulty, mastery, todayLearned,
     showAnswer, onQueryChange, onCategoryChange, onDifficultyChange, onMasteryFilterChange,
     onSelectQuestion, onShowAnswerChange, onUpdateMastery, onCreateQuestion, onEditQuestion,
     onDeleteQuestion, onRegenerateQuestion, onQuestionContextMenu, onExplainSelection, onManageCategories, onImportQuestions, onStartPractice,
   } = props
   const { containerRef, selectionAction } = useTextSelectionAction<HTMLElement>(selected, onExplainSelection)
+  const masteredCount = questions.filter((question) => question.mastery === '掌握').length
+  const masteryPercentage = questions.length ? Math.round((masteredCount / questions.length) * 100) : 0
 
   return <div className="library-page">
     <header className="page-header">
@@ -48,9 +51,9 @@ export function LibraryPage(props: Props) {
     </header>
     <div className="stats-row">
       <div><span>题目总数</span><strong>{questions.length}</strong></div>
-      <div><span>本周已练</span><strong>12</strong></div>
+      <div><span>今日学习</span><strong>{todayLearned}</strong></div>
       <div><span>待复习</span><strong>{questions.filter((question) => question.mastery !== '掌握').length}</strong></div>
-      <div><span>掌握度</span><strong>34%</strong></div>
+      <div><span>掌握度</span><strong>{masteryPercentage}%</strong></div>
     </div>
     <div className="toolbar">
       <label className="search-box"><Search size={14} aria-hidden="true" /><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索问题或关键词" /></label>

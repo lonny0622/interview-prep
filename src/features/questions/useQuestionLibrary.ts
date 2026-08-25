@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { llmApi } from '../../api/interviewApi'
 import { questionApi } from '../../api/questionApi'
+import { studyApi } from '../../api/studyApi'
 import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, QUESTION_VIEW_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
 import { parseImportedQuestions, parseQuestionOutline, sanitizeGeneratedAnswer } from '../questionImport'
 import type { Mastery, Question, QuestionCategory, QuestionDraft, QuestionEditorState, QuestionImporterState, QuestionRegeneratorState } from '../../types/question'
@@ -35,6 +36,16 @@ type QuestionViewState = {
   category: string
   difficulty: string
   mastery: string
+}
+
+function buildCategoryGenerationContext(sourceQuestions: Question[], instructions = ''): string {
+  const category = sourceQuestions[0]?.category || '未分类'
+  const relatedTitles = sourceQuestions.slice(0, 30).map((question) => `- ${question.title}`).join('\n')
+  return [
+    `目标分类：${category}。分类是解释题目术语的首要语境；遇到“缓存”“线程”“桥接”等跨领域词时，必须优先按「${category}」领域回答，不得擅自切换到 React 状态、浏览器或其他无关语境。`,
+    relatedTitles ? `本次同分类题目：\n${relatedTitles}` : '',
+    instructions.trim() ? `用户补充的生成要求：\n${instructions.trim()}` : '',
+  ].filter(Boolean).join('\n\n')
 }
 
 function loadQuestionView(): QuestionViewState {
@@ -126,12 +137,14 @@ export function useQuestionLibrary() {
 
   const updateMastery = async (questionId: string, nextMastery: Mastery) => {
     try {
-      const { question } = await questionApi.update(questionId, { mastery: nextMastery })
-      setQuestions((current) => current.map((item) => item.id === questionId ? question : item))
+      await studyApi.saveLearningProgress(questionId, nextMastery, null)
+      setQuestions((current) => current.map((item) => item.id === questionId ? { ...item, mastery: nextMastery } : item))
       setServerReady(true)
+      return true
     } catch {
       setServerReady(false)
       window.alert('保存失败，SQLite 服务暂不可用；本次修改未写入。')
+      return false
     }
   }
 
@@ -264,7 +277,14 @@ export function useQuestionLibrary() {
     setImporter({ ...importer, step: 'preview', category: outline.category, drafts: existingDrafts, processing: true, progress: { completed: existingDrafts.length, total: outline.questions.length }, error: '' })
     try {
       const payload = await llmApi.enrichQuestions(
-        { category: outline.category, questions: outline.questions.slice(existingDrafts.length), source },
+        {
+          category: outline.category,
+          questions: outline.questions.slice(existingDrafts.length),
+          context: [
+            `目标分类：${outline.category}。分类是解释每道题的首要语境，答案必须直接回应题目，不得因同名术语切换到其他技术领域。`,
+            `原始导入材料：\n${source}`,
+          ].join('\n\n'),
+        },
         (progress) => setImporter((current) => current ? {
           ...current,
           drafts: [...existingDrafts, ...progress.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))],
@@ -318,17 +338,18 @@ export function useQuestionLibrary() {
     }
   }
 
-  const runRegeneration = async (sourceQuestions: Question[], existingDrafts: QuestionDraft[]) => {
+  const runRegeneration = async (sourceQuestions: Question[], existingDrafts: QuestionDraft[], instructions = '') => {
     if (!sourceQuestions.length || existingDrafts.length >= sourceQuestions.length) return
     regenerateAbortController.current?.abort()
     const controller = new AbortController()
     regenerateAbortController.current = controller
-    setRegenerator((current) => current ? { ...current, drafts: existingDrafts, processing: true, saving: false, error: '', progress: { completed: existingDrafts.length, total: sourceQuestions.length } } : current)
+    setRegenerator((current) => current ? { ...current, drafts: existingDrafts, awaitingInstructions: false, processing: true, saving: false, error: '', progress: { completed: existingDrafts.length, total: sourceQuestions.length } } : current)
     try {
       const payload = await llmApi.enrichQuestions(
         {
           category: sourceQuestions[0].category,
           questions: sourceQuestions.slice(existingDrafts.length).map((question) => ({ title: question.title, difficulty: question.difficulty })),
+          context: buildCategoryGenerationContext(sourceQuestions, instructions),
         },
         (progress) => setRegenerator((current) => current ? {
           ...current,
@@ -348,13 +369,13 @@ export function useQuestionLibrary() {
     }
   }
 
-  const startRegeneration = (sourceQuestions: Question[], scopeLabel: string) => {
+  const startRegeneration = (sourceQuestions: Question[], scopeLabel: string, awaitingInstructions = false) => {
     if (!sourceQuestions.length) return
-    setRegenerator({ questions: sourceQuestions, drafts: [], scopeLabel, processing: true, saving: false, error: '', progress: { completed: 0, total: sourceQuestions.length } })
-    void runRegeneration(sourceQuestions, [])
+    setRegenerator({ questions: sourceQuestions, drafts: [], scopeLabel, instructions: '', awaitingInstructions, processing: !awaitingInstructions, saving: false, error: '', progress: { completed: 0, total: sourceQuestions.length } })
+    if (!awaitingInstructions) void runRegeneration(sourceQuestions, [])
   }
 
-  const regenerateSingleQuestion = (question: Question) => startRegeneration([question], `单题 · ${question.title}`)
+  const regenerateSingleQuestion = (question: Question) => startRegeneration([question], `单题 · ${question.title}`, true)
 
   const regenerateCategory = (categoryToRegenerate: QuestionCategory) => {
     const sourceQuestions = questions.filter((question) => question.category.toLocaleLowerCase() === categoryToRegenerate.name.toLocaleLowerCase())
@@ -366,7 +387,12 @@ export function useQuestionLibrary() {
 
   const continueRegeneration = () => {
     if (!regenerator) return
-    void runRegeneration(regenerator.questions, regenerator.drafts)
+    void runRegeneration(regenerator.questions, regenerator.drafts, regenerator.instructions)
+  }
+
+  const beginRegeneration = () => {
+    if (!regenerator || !regenerator.awaitingInstructions) return
+    void runRegeneration(regenerator.questions, [], regenerator.instructions)
   }
 
   const closeRegenerator = () => {
@@ -408,6 +434,6 @@ export function useQuestionLibrary() {
     setShowAnswer, setQuery, setCategory, setDifficulty, setMastery, setEditor, setImporter,
     setCategoryManagerOpen, setSelectedId, updateMastery, openEditor, createCategory,
     renameCategory, deleteCategory, moveCategoryQuestions, saveQuestion, deleteQuestion, importPreview, importWithAi, closeImporter, confirmImport,
-    setRegenerator, regenerateSingleQuestion, regenerateCategory, continueRegeneration, closeRegenerator, confirmRegeneration,
+    setRegenerator, regenerateSingleQuestion, regenerateCategory, beginRegeneration, continueRegeneration, closeRegenerator, confirmRegeneration,
   }
 }

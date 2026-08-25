@@ -49,13 +49,16 @@ function createResponse() {
 describe('LLM streaming route', () => {
   it('writes start, ordered progress and completion events as NDJSON', async () => {
     const questions = ['Q1', 'Q2', 'Q3', 'Q4'].map((title) => ({ title, difficulty: '中等', category: 'React' }))
-    const request = createRequest({ category: 'React', questions })
+    const request = createRequest({ category: '网络', questions, context: '缓存按 HTTP 缓存语境解释' })
     const response = createResponse()
     const services = {
       callModel: async () => [],
       normalizeQuestionOutline: (value) => value,
       enrichQuestionBatch: async () => [],
-      enrichQuestionBatchStream: async function* () {
+      enrichQuestionBatchStream: async function* (outlines, category, context) {
+        assert.deepEqual(outlines, questions)
+        assert.equal(category, '网络')
+        assert.equal(context, '缓存按 HTTP 缓存语境解释')
         yield questions.slice(0, 3)
         yield questions.slice(3)
       },

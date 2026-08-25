@@ -43,6 +43,8 @@ export type QuestionRegeneratorState = {
   questions: Question[]
   drafts: QuestionDraft[]
   scopeLabel: string
+  instructions: string
+  awaitingInstructions: boolean
   processing: boolean
   saving: boolean
   error: string

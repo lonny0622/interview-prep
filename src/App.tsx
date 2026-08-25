@@ -47,6 +47,7 @@ function App() {
       category={library.category}
       difficulty={library.difficulty}
       mastery={library.mastery}
+      todayLearned={learning.stats.todayLearned}
       showAnswer={library.showAnswer}
       onQueryChange={library.setQuery}
       onCategoryChange={library.setCategory}
@@ -54,7 +55,10 @@ function App() {
       onMasteryFilterChange={library.setMastery}
       onSelectQuestion={(id) => { library.setSelectedId(id); library.setShowAnswer(false) }}
       onShowAnswerChange={library.setShowAnswer}
-      onUpdateMastery={(mastery) => { if (library.selected) library.updateMastery(library.selected.id, mastery) }}
+      onUpdateMastery={(mastery) => {
+        if (!library.selected) return
+        void library.updateMastery(library.selected.id, mastery).then((saved) => { if (saved) void learning.refreshStats() })
+      }}
       onCreateQuestion={() => library.openEditor()}
       onEditQuestion={library.openEditor}
       onDeleteQuestion={library.deleteQuestion}
@@ -130,7 +134,7 @@ function App() {
     {library.categoryManagerOpen && <CategoryManagerModal categories={library.categoryCatalog} onClose={() => library.setCategoryManagerOpen(false)} onCreate={async (name) => { await library.createCategory(name) }} onRename={library.renameCategory} onDelete={library.deleteCategory} onMoveQuestions={library.moveCategoryQuestions} onRegenerate={library.regenerateCategory} />}
     {library.editor && <QuestionEditorModal editor={library.editor} onChange={library.setEditor} onClose={() => library.setEditor(null)} onSave={library.saveQuestion} />}
     {library.importer && <QuestionImportModal state={library.importer} categories={library.categories.filter((item) => item !== '全部分类')} onChange={library.setImporter} onClose={library.closeImporter} onCreateCategory={library.createCategory} onLocalParse={library.importPreview} onGenerate={() => void library.importWithAi()} onConfirm={library.confirmImport} />}
-    {library.regenerator && <QuestionRegenerateModal state={library.regenerator} onChange={library.setRegenerator} onClose={library.closeRegenerator} onContinue={library.continueRegeneration} onConfirm={() => void library.confirmRegeneration()} />}
+    {library.regenerator && <QuestionRegenerateModal state={library.regenerator} onChange={library.setRegenerator} onClose={library.closeRegenerator} onStart={library.beginRegeneration} onContinue={library.continueRegeneration} onConfirm={() => void library.confirmRegeneration()} />}
     {selectionExplain.open && <SelectionExplainDialog state={selectionExplain.dialog} sessions={selectionExplain.sessions} historyOpen={selectionExplain.historyOpen} onInputChange={selectionExplain.setInput} onAsk={() => void selectionExplain.ask()} onToggleHistory={selectionExplain.toggleHistory} onSelectSession={selectionExplain.selectSession} onDeleteSession={selectionExplain.deleteSession} onClose={selectionExplain.close} />}
   </div>
 }
