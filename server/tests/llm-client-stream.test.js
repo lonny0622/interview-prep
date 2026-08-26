@@ -25,4 +25,30 @@ describe('LLM token streaming', () => {
 
     assert.deepEqual(chunks, ['第一段', '第二段'])
   })
+
+  it('keeps a long response alive while new chunks continue arriving', async () => {
+    const encoder = new globalThis.TextEncoder()
+    globalThis.fetch = async (_url, init) => new globalThis.Response(new globalThis.ReadableStream({
+      start(controller) {
+        let index = 0
+        let timer
+        const chunks = ['第一段', '第二段', '第三段']
+        const stop = () => { globalThis.clearTimeout(timer); controller.error(new globalThis.DOMException('aborted', 'AbortError')) }
+        init.signal.addEventListener('abort', stop, { once: true })
+        const send = () => {
+          if (init.signal.aborted) return
+          controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"${chunks[index]}"}}]}\n\n`))
+          index += 1
+          if (index < chunks.length) timer = globalThis.setTimeout(send, 25)
+          else timer = globalThis.setTimeout(() => { controller.enqueue(encoder.encode('data: [DONE]\n\n')); controller.close() }, 25)
+        }
+        send()
+      },
+    }), { status: 200 })
+
+    const chunks = []
+    for await (const chunk of streamChat({ model: 'test-model', messages: [{ role: 'user', content: 'hello' }] }, { baseUrl: 'https://llm.example.test', apiKey: 'key', requestTimeoutMs: 40 })) chunks.push(chunk)
+
+    assert.deepEqual(chunks, ['第一段', '第二段', '第三段'])
+  })
 })

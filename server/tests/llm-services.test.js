@@ -10,6 +10,8 @@ describe('selection explanation prompt', () => {
     assert.match(EXPLANATION_SYSTEM_PROMPT, /通用技术知识/)
     assert.match(EXPLANATION_SYSTEM_PROMPT, /不能因为题目没有写明就拒绝回答/)
     assert.doesNotMatch(EXPLANATION_SYSTEM_PROMPT, /请只基于题目内容/)
+    assert.match(EXPLANATION_SYSTEM_PROMPT, /节点 ID 只使用 ASCII 字母和数字/)
+    assert.match(EXPLANATION_SYSTEM_PROMPT, /检查箭头、括号与引号是否闭合/)
   })
 })
 

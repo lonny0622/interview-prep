@@ -1,7 +1,10 @@
-import { ArrowRight, ChevronDown, ChevronUp, FilePenLine, ListFilter, MoreHorizontal, Plus, Search, Settings, Sparkles, Trash2, Upload } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowRight, ChevronDown, ChevronUp, FilePenLine, ListFilter, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sparkles, Trash2, Upload } from 'lucide-react'
 import { MarkdownContent } from '../../components/markdown/MarkdownContent'
 import { useTextSelectionAction } from '../../features/ai/useTextSelectionAction'
 import type { Mastery, Question } from '../../types/question'
+
+const QUESTION_LIST_COLLAPSED_STORAGE_KEY = 'interview-prep.question-list-collapsed.v1'
 
 type Props = {
   questions: Question[]
@@ -40,9 +43,14 @@ export function LibraryPage(props: Props) {
     onSelectQuestion, onShowAnswerChange, onUpdateMastery, onCreateQuestion, onEditQuestion,
     onDeleteQuestion, onRegenerateQuestion, onQuestionContextMenu, onExplainSelection, onManageCategories, onImportQuestions, onStartPractice,
   } = props
+  const [questionListCollapsed, setQuestionListCollapsed] = useState(() => localStorage.getItem(QUESTION_LIST_COLLAPSED_STORAGE_KEY) === 'true')
   const { containerRef, selectionAction } = useTextSelectionAction<HTMLElement>(selected, onExplainSelection)
   const masteredCount = questions.filter((question) => question.mastery === '掌握').length
   const masteryPercentage = questions.length ? Math.round((masteredCount / questions.length) * 100) : 0
+
+  useEffect(() => {
+    localStorage.setItem(QUESTION_LIST_COLLAPSED_STORAGE_KEY, String(questionListCollapsed))
+  }, [questionListCollapsed])
 
   return <div className="library-page">
     <header className="page-header">
@@ -63,15 +71,16 @@ export function LibraryPage(props: Props) {
       <button className="quiet-button" type="button" onClick={onManageCategories}><Settings size={13} />管理分类</button>
       <button className="quiet-button" type="button" onClick={onImportQuestions}><Upload size={13} />批量导入</button>
     </div>
-    <div className="library-layout">
-      <section className="question-list" aria-label="面试题列表">
-        <div className="list-heading"><span>{filteredQuestions.length} 道题目</span><button className="icon-button" type="button" title="筛选题目"><ListFilter size={14} /></button></div>
+    <div className={`library-layout${questionListCollapsed ? ' question-list-collapsed' : ''}`}>
+      {!questionListCollapsed && <section className="question-list" aria-label="面试题列表">
+        <div className="list-heading"><span>{filteredQuestions.length} 道题目</span><div className="question-list-heading-actions"><button className="icon-button" type="button" title="筛选题目"><ListFilter size={14} /></button><button className="icon-button" type="button" title="收起题目列表" aria-label="收起题目列表" aria-expanded="true" onClick={() => setQuestionListCollapsed(true)}><PanelLeftClose size={15} /></button></div></div>
         {filteredQuestions.map((question) => <button key={question.id} className={`question-item ${question.id === selectedId ? 'active' : ''}`} type="button" onClick={() => onSelectQuestion(question.id)} onContextMenu={(event) => onQuestionContextMenu(event, question)}>
           <span className="question-item-title">{question.title}</span>
           <span className="question-item-meta"><span>{question.category}</span><span className={`difficulty ${question.difficulty}`}>{question.difficulty}</span><span className="mastery-dot" data-level={question.mastery} />{question.mastery}</span>
         </button>)}
-      </section>
+      </section>}
       <section ref={containerRef} className="question-detail" onContextMenu={(event) => { if (selected) onQuestionContextMenu(event, selected) }}>
+        {questionListCollapsed && <button className="question-list-expand-button" type="button" aria-expanded="false" onClick={() => setQuestionListCollapsed(false)}><PanelLeftOpen size={15} />展开题目列表</button>}
         {selected ? <>
           <div className="detail-topline"><span className="tag">{selected.category}</span><span className={`difficulty ${selected.difficulty}`}>{selected.difficulty}</span><span className="importance">重要性 {selected.importance}/5</span><button className="icon-button" type="button" title="更多操作"><MoreHorizontal size={16} /></button></div>
           <h2>{selected.title}</h2>

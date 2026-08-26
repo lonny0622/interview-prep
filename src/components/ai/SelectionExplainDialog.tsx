@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import { ArrowUp, Bot, History, MessageSquareText, Sparkles, Trash2, UserRound, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowUp, Bot, History, Maximize2, MessageSquareText, Minimize2, Sparkles, Trash2, UserRound, X } from 'lucide-react'
 import { MarkdownContent } from '../markdown/MarkdownContent'
 import type { ExplainDialogState, ExplainSession } from '../../types/ai'
 
@@ -48,17 +48,29 @@ function ExplainHistory({ sessions, activeId, onSelect, onDelete }: {
 
 export function SelectionExplainDialog({ state, sessions, historyOpen, onInputChange, onAsk, onToggleHistory, onSelectSession, onDeleteSession, onClose }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end', behavior: state?.streaming ? 'auto' : 'smooth' })
   }, [state?.messages, state?.error, state?.streaming])
 
-  return <div className="modal-backdrop ai-explain-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className={`ai-explain-dialog${historyOpen ? ' history-visible' : ''}`} role="dialog" aria-modal="true" aria-labelledby="selection-explain-title">
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (fullscreen) setFullscreen(false)
+      else onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [fullscreen, onClose])
+
+  return <div className={`modal-backdrop ai-explain-backdrop${fullscreen ? ' is-fullscreen' : ''}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <section className={`ai-explain-dialog${historyOpen ? ' history-visible' : ''}${fullscreen ? ' is-fullscreen' : ''}`} role="dialog" aria-modal="true" aria-labelledby="selection-explain-title">
       <header className="ai-explain-header">
         <div className="ai-explain-title"><span className="ai-explain-icon"><Bot size={16} /></span><div><p className="eyebrow">AI 助教</p><h2 id="selection-explain-title">{historyOpen && !state ? '对话历史' : '解释选中的概念'}</h2><p>{historyOpen && !state ? '查看之前的解释并继续追问' : '结合上下文与通用技术知识回答'}</p></div></div>
         <div className="ai-explain-header-actions">
           <button className={`ai-history-toggle${historyOpen ? ' active' : ''}`} type="button" title="对话历史" onClick={onToggleHistory}><History size={16} /><span>历史</span>{sessions.length > 0 && <b>{sessions.length}</b>}</button>
+          <button className="icon-button" type="button" title={fullscreen ? '退出全屏' : '全屏显示'} aria-label={fullscreen ? '退出全屏' : '全屏显示'} aria-pressed={fullscreen} onClick={() => setFullscreen((current) => !current)}>{fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button>
           <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
         </div>
       </header>
@@ -70,7 +82,7 @@ export function SelectionExplainDialog({ state, sessions, historyOpen, onInputCh
             {!state.messages.length && <div className="ai-explain-empty"><Bot size={20} /><p>可以追问概念原理、实际例子，也可以指出原解答中不够清楚的地方。</p></div>}
             {state.messages.map((message, index) => <article key={`${message.role}-${index}`} className={`ai-message ${message.role}`}>
               <span className="ai-message-avatar" aria-label={message.role === 'user' ? '你' : 'AI'}>{message.role === 'user' ? <UserRound size={14} /> : <Bot size={14} />}</span>
-              <div className="ai-message-body"><span className="ai-message-role">{message.role === 'user' ? '你' : 'AI 助教'}</span><div className="ai-message-content">{message.role === 'assistant' ? <MarkdownContent>{message.content || (state.streaming ? '正在思考…' : '')}</MarkdownContent> : <p>{message.content}</p>}</div></div>
+              <div className="ai-message-body"><span className="ai-message-role">{message.role === 'user' ? '你' : 'AI 助教'}</span><div className="ai-message-content">{message.role === 'assistant' ? <MarkdownContent deferMermaid={state.streaming && index === state.messages.length - 1}>{message.content || (state.streaming ? '正在思考…' : '')}</MarkdownContent> : <p>{message.content}</p>}</div></div>
             </article>)}
             {state.error && <div className="ai-explain-error"><strong>暂时无法连接 AI</strong><span>{state.error}</span><small>该会话已保存，可从“历史”中重新打开并继续追问。</small></div>}
             <div ref={messagesEndRef} />

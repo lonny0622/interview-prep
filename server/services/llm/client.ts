@@ -55,9 +55,19 @@ export async function* streamChat(
   if (!config.baseUrl || !model || !config.apiKey) throw new Error('LLM Gateway 配置不完整，请检查 .env.local。')
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs)
+  let idleTimedOut = false
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const resetIdleTimeout = () => {
+    if (timeout) clearTimeout(timeout)
+    timeout = setTimeout(() => {
+      idleTimedOut = true
+      controller.abort()
+    }, config.requestTimeoutMs)
+    timeout.unref()
+  }
   const forwardAbort = () => controller.abort()
   signal?.addEventListener('abort', forwardAbort, { once: true })
+  resetIdleTimeout()
 
   try {
     const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
@@ -66,6 +76,7 @@ export async function* streamChat(
       signal: controller.signal,
       body: JSON.stringify({ ...request, model, stream: true }),
     })
+    resetIdleTimeout()
     if (!response.ok) {
       const payload = await response.json().catch(() => ({})) as ChatResponse
       throw new Error(payload.error?.message || `上游模型请求失败（${response.status}）。`)
@@ -79,6 +90,7 @@ export async function* streamChat(
     try {
       while (!finished) {
         const { done, value } = await reader.read()
+        if (value?.byteLength) resetIdleTimeout()
         buffer += decoder.decode(value, { stream: !done })
         const lines = buffer.split(/\r?\n/)
         buffer = lines.pop() || ''
@@ -98,10 +110,10 @@ export async function* streamChat(
       reader.releaseLock()
     }
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error(`模型请求超过 ${Math.round(config.requestTimeoutMs / 1000)} 秒，已自动停止。`)
+    if (error instanceof Error && error.name === 'AbortError' && idleTimedOut) throw new Error(`模型连续 ${Math.round(config.requestTimeoutMs / 1000)} 秒没有返回新内容，已自动停止。`)
     throw error
   } finally {
-    clearTimeout(timeout)
+    if (timeout) clearTimeout(timeout)
     signal?.removeEventListener('abort', forwardAbort)
   }
 }
