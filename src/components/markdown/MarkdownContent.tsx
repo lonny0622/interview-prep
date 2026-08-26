@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { MermaidDiagram } from './MermaidDiagram'
 
-function markdownComponents(deferMermaid: boolean): Components {
+function createMarkdownComponents(deferMermaid: boolean): Components {
   return {
     code({ className, children, node, ...props }) {
       void node
@@ -18,6 +18,9 @@ function markdownComponents(deferMermaid: boolean): Components {
   }
 }
 
+const markdownComponents = createMarkdownComponents(false)
+const deferredMermaidComponents = createMarkdownComponents(true)
+
 export function MarkdownContent({ children, deferMermaid = false }: { children: string; deferMermaid?: boolean }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(deferMermaid)}>{children}</ReactMarkdown>
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={deferMermaid ? deferredMermaidComponents : markdownComponents}>{children}</ReactMarkdown>
 }

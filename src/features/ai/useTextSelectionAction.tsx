@@ -17,40 +17,52 @@ export function useTextSelectionAction<T extends HTMLElement>(question: Question
   }, [question?.id])
 
   useEffect(() => {
+    let animationFrame = 0
+
+    const clearAction = () => setAction((current) => current ? null : current)
+
     const updateSelection = () => {
       const selection = window.getSelection()
       const container = containerRef.current
       if (!selection || selection.isCollapsed || !container || selection.rangeCount === 0) {
-        setAction(null)
+        clearAction()
         return
       }
 
       const range = selection.getRangeAt(0)
       if (!container.contains(range.commonAncestorContainer)) {
-        setAction(null)
+        clearAction()
         return
       }
 
       const text = selection.toString().trim().slice(0, 4000)
       const rect = range.getBoundingClientRect()
       if (!text || (!rect.width && !rect.height)) {
-        setAction(null)
+        clearAction()
         return
       }
 
-      const left = Math.min(Math.max(rect.left + rect.width / 2, 52), window.innerWidth - 52)
-      const top = rect.top > 58 ? rect.top - 42 : Math.min(rect.bottom + 12, window.innerHeight - 48)
-      setAction({ text, left, top })
+      const left = Math.round(Math.min(Math.max(rect.left + rect.width / 2, 52), window.innerWidth - 52))
+      const top = Math.round(rect.top > 58 ? rect.top - 42 : Math.min(rect.bottom + 12, window.innerHeight - 48))
+      setAction((current) => current?.text === text && current.left === left && current.top === top ? current : { text, left, top })
     }
 
-    const hideAction = () => setAction(null)
-    document.addEventListener('selectionchange', updateSelection)
-    window.addEventListener('resize', hideAction)
-    document.addEventListener('scroll', hideAction, true)
+    const scheduleSelectionUpdate = () => {
+      if (animationFrame) return
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0
+        updateSelection()
+      })
+    }
+
+    document.addEventListener('selectionchange', scheduleSelectionUpdate)
+    window.addEventListener('resize', clearAction)
+    document.addEventListener('scroll', clearAction, true)
     return () => {
-      document.removeEventListener('selectionchange', updateSelection)
-      window.removeEventListener('resize', hideAction)
-      document.removeEventListener('scroll', hideAction, true)
+      if (animationFrame) window.cancelAnimationFrame(animationFrame)
+      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
+      window.removeEventListener('resize', clearAction)
+      document.removeEventListener('scroll', clearAction, true)
     }
   }, [])
 
