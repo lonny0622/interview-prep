@@ -22,7 +22,7 @@ it('persists login lockouts across limiter instances', async () => {
   assert.equal(restarted.consume('ip:203.0.113.1', 2_000).allowed, false)
 })
 
-it('keeps exactly one active session and invalidates the previous one', async () => {
+it('keeps independent active sessions for the same configured account', async () => {
   const { clearActiveSession, isActiveSession, setActiveSession } = await import('../../dist-server/db/repositories/auth.repository.js')
   const now = 10_000
 
@@ -30,9 +30,10 @@ it('keeps exactly one active session and invalidates the previous one', async ()
   assert.equal(isActiveSession('session-one', now + 1), true)
 
   setActiveSession('session-two', now + 60_000, now + 2)
-  assert.equal(isActiveSession('session-one', now + 3), false)
+  assert.equal(isActiveSession('session-one', now + 3), true)
   assert.equal(isActiveSession('session-two', now + 3), true)
 
   clearActiveSession('session-two')
   assert.equal(isActiveSession('session-two', now + 4), false)
+  assert.equal(isActiveSession('session-one', now + 4), true)
 })

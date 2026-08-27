@@ -26,8 +26,9 @@ it('migrates a pre-versioned database without losing existing questions', async 
   await import('../../dist-server/db/schema.js')
   const { closeDatabase, database } = await import('../../dist-server/db/connection.js')
 
-  assert.equal(database.prepare('PRAGMA user_version').get().user_version, 3)
+  assert.equal(database.prepare('PRAGMA user_version').get().user_version, 4)
   assert.equal(database.prepare('SELECT title FROM questions WHERE id = ?').get('legacy-question').title, '保留旧题目')
-  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('auth_login_attempts', 'auth_active_session')").get().count, 2)
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('auth_login_attempts', 'auth_sessions')").get().count, 2)
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'auth_active_session'").get().count, 0)
   closeDatabase()
 })

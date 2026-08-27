@@ -42,6 +42,8 @@ describe('single-account authentication primitives', () => {
     assert.match(cookie, /HttpOnly/)
     assert.match(cookie, /SameSite=Strict/)
     assert.match(cookie, /Secure/)
+    assert.match(cookie, /Max-Age=120/)
+    assert.match(cookie, /Expires=/)
     assert.equal(parseCookies('one=1; encoded=hello%20world').encoded, 'hello world')
   })
 

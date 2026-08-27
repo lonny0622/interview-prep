@@ -144,3 +144,18 @@ if (version < 3) database.exec(`
   PRAGMA user_version = 3;
   COMMIT;
 `)
+
+if (version < 4) database.exec(`
+  BEGIN IMMEDIATE;
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    session_id TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  INSERT OR IGNORE INTO auth_sessions (session_id, expires_at, updated_at)
+    SELECT session_id, expires_at, updated_at FROM auth_active_session;
+  DROP TABLE auth_active_session;
+  CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+  PRAGMA user_version = 4;
+  COMMIT;
+`)

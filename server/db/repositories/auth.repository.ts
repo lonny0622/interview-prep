@@ -21,20 +21,21 @@ export const authAttemptStore: AttemptStore = {
 }
 
 export function setActiveSession(sessionId: string, expiresAt: number, now = Date.now()): void {
-  database.prepare(`INSERT INTO auth_active_session (singleton, session_id, expires_at, updated_at) VALUES (1, ?, ?, ?)
-    ON CONFLICT(singleton) DO UPDATE SET session_id = excluded.session_id, expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
+  database.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(now)
+  database.prepare(`INSERT INTO auth_sessions (session_id, expires_at, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
     .run(sessionId, expiresAt, now)
 }
 
 export function isActiveSession(sessionId: string, now = Date.now()): boolean {
-  const row = database.prepare('SELECT session_id, expires_at FROM auth_active_session WHERE singleton = 1').get() as { session_id?: string; expires_at?: number } | undefined
+  const row = database.prepare('SELECT session_id, expires_at FROM auth_sessions WHERE session_id = ?').get(sessionId) as { session_id?: string; expires_at?: number } | undefined
   if (!row || row.expires_at! <= now) {
-    if (row) database.prepare('DELETE FROM auth_active_session WHERE singleton = 1').run()
+    if (row) database.prepare('DELETE FROM auth_sessions WHERE session_id = ?').run(sessionId)
     return false
   }
-  return row.session_id === sessionId
+  return true
 }
 
 export function clearActiveSession(sessionId: string): void {
-  database.prepare('DELETE FROM auth_active_session WHERE singleton = 1 AND session_id = ?').run(sessionId)
+  database.prepare('DELETE FROM auth_sessions WHERE session_id = ?').run(sessionId)
 }

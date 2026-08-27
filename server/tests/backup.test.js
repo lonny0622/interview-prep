@@ -22,6 +22,6 @@ it('creates and verifies an application-aware SQLite backup', async () => {
   assert.equal(files.length, 1)
   const copy = new DatabaseSync(join(backupDir, files[0]), { readOnly: true })
   assert.equal(copy.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
-  assert.equal(copy.prepare('PRAGMA user_version').get().user_version, 3)
+  assert.equal(copy.prepare('PRAGMA user_version').get().user_version, 4)
   copy.close()
 })

@@ -69,5 +69,7 @@ export function sessionCookieName(secure: boolean): string {
 
 export function sessionCookie(token: string, maxAge: number, secure: boolean): string {
   const secureAttribute = secure ? '; Secure' : ''
-  return `${sessionCookieName(secure)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAge))}${secureAttribute}`
+  const normalizedMaxAge = Math.max(0, Math.floor(maxAge))
+  const expires = new Date(Date.now() + normalizedMaxAge * 1_000).toUTCString()
+  return `${sessionCookieName(secure)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${normalizedMaxAge}; Expires=${expires}${secureAttribute}`
 }
