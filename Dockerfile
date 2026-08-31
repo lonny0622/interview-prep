@@ -1,4 +1,4 @@
-FROM node:24.19.0-alpine3.23 AS build
+FROM node:26.8.1-alpine3.23 AS build
 
 WORKDIR /app
 RUN corepack enable
@@ -7,7 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-FROM node:24.19.0-alpine3.23 AS runtime
+FROM node:26.8.1-alpine3.23 AS runtime
 
 RUN apk add --no-cache ffmpeg poppler-utils unzip \
   && mkdir -p /app/data \
