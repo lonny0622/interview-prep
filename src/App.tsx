@@ -7,6 +7,7 @@ import { CategoryManagerModal } from './components/questions/CategoryManagerModa
 import { QuestionEditorModal } from './components/questions/QuestionEditorModal'
 import { QuestionImportModal } from './components/questions/QuestionImportModal'
 import { QuestionRegenerateModal } from './components/questions/QuestionRegenerateModal'
+import { FollowUpAnswerModal } from './components/questions/FollowUpAnswerModal'
 import { useInterviewSession } from './features/interview/useInterviewSession'
 import { usePracticeSession } from './features/practice/usePracticeSession'
 import { useProfileData } from './features/profile/useProfileData'
@@ -65,6 +66,8 @@ function App() {
       onRegenerateQuestion={library.regenerateSingleQuestion}
       onQuestionContextMenu={selectionExplain.openFromContextMenu}
       onExplainSelection={selectionExplain.openSelection}
+      onEditFollowUpAnswer={library.openFollowUpAnswer}
+      onGenerateFollowUpAnswer={library.openFollowUpAnswer}
       onManageCategories={() => library.setCategoryManagerOpen(true)}
       onImportQuestions={() => library.setImporter({ step: 'input', source: '', category: '', drafts: [], error: '', processing: false })}
       onStartPractice={() => setActivePage('practice')}
@@ -84,6 +87,8 @@ function App() {
       onMarkMastery={(mastery) => void learning.markMastery(mastery)}
       onQuestionContextMenu={selectionExplain.openFromContextMenu}
       onExplainSelection={selectionExplain.openSelection}
+      onEditFollowUpAnswer={library.openFollowUpAnswer}
+      onGenerateFollowUpAnswer={library.openFollowUpAnswer}
     />
 
     if (activePage === 'practice') return <PracticePage
@@ -135,6 +140,10 @@ function App() {
     {library.editor && <QuestionEditorModal editor={library.editor} onChange={library.setEditor} onClose={() => library.setEditor(null)} onSave={library.saveQuestion} />}
     {library.importer && <QuestionImportModal state={library.importer} categories={library.categories.filter((item) => item !== '全部分类')} onChange={library.setImporter} onClose={library.closeImporter} onCreateCategory={library.createCategory} onLocalParse={library.importPreview} onGenerate={() => void library.importWithAi()} onConfirm={library.confirmImport} />}
     {library.regenerator && <QuestionRegenerateModal state={library.regenerator} onChange={library.setRegenerator} onClose={library.closeRegenerator} onStart={library.beginRegeneration} onContinue={library.continueRegeneration} onConfirm={() => void library.confirmRegeneration()} />}
+    {library.followUpEditor && (() => {
+      const question = library.questions.find((item) => item.id === library.followUpEditor?.questionId)
+      return question ? <FollowUpAnswerModal state={library.followUpEditor} question={question} onChange={library.setFollowUpEditor} onGenerate={() => void library.generateFollowUpAnswer()} onSave={() => void library.saveFollowUpAnswer()} onClose={() => library.setFollowUpEditor(null)} /> : null
+    })()}
     {selectionExplain.open && <SelectionExplainDialog state={selectionExplain.dialog} sessions={selectionExplain.sessions} historyOpen={selectionExplain.historyOpen} onInputChange={selectionExplain.setInput} onAsk={() => void selectionExplain.ask()} onToggleHistory={selectionExplain.toggleHistory} onSelectSession={selectionExplain.selectSession} onDeleteSession={selectionExplain.deleteSession} onClose={selectionExplain.close} />}
   </div>
 }

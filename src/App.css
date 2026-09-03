@@ -87,6 +87,43 @@ body { overflow: hidden; }
   .main-content { height: calc(100vh - 62px); overflow-y: auto; }
 }
 
+/* Follow-up questions share one expandable interaction in the library and learning flows. */
+.follow-ups { display: grid; gap: 8px; }
+.follow-ups li { display: block; padding: 0; overflow: hidden; border: 1px solid transparent; }
+.follow-ups li.is-expanded { border-color: #dce5f3; background: #fbfcfe; }
+.follow-up-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; border: 0; color: #5e6d80; background: transparent; text-align: left; font-size: 11px; line-height: 1.55; }
+.follow-up-toggle:hover { color: var(--ink); background: #f2f5f9; }
+.follow-up-toggle span { min-width: 0; }
+.follow-up-toggle svg { flex: 0 0 auto; color: #8494a9; }
+.follow-up-answer { padding: 2px 12px 13px; color: #536174; font-size: 11px; line-height: 1.75; }
+.follow-up-answer p { margin: 8px 0; }
+.follow-up-answer pre { max-width: 100%; overflow-x: auto; padding: 10px; border-radius: 5px; background: #eef2f7; }
+.follow-up-edit-button { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px; padding: 5px 0; border: 0; color: #718198; background: transparent; font-size: 10px; }
+.follow-up-edit-button:hover { color: var(--blue); }
+.follow-up-missing { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0 1px; border-top: 1px dashed #dce3ec; }
+.follow-up-missing p { margin: 0; color: var(--muted); }
+.follow-up-missing > div { display: flex; flex: 0 0 auto; gap: 7px; }
+.follow-up-missing button { min-height: 30px; }
+.follow-up-empty-note { margin: 13px 0 0; color: var(--muted); font-size: 11px; }
+.learning-follow-ups { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.learning-follow-ups .follow-ups { margin-top: 12px; }
+.follow-up-answer-modal { width: min(680px, 100%); }
+.follow-up-answer-form { display: grid; gap: 18px; padding: 24px 28px; }
+.follow-up-context { display: grid; gap: 7px; padding: 15px; border-radius: 6px; background: var(--soft); }
+.follow-up-context span { color: var(--blue); font-size: 9px; }
+.follow-up-context strong { color: var(--ink); font-size: 12px; line-height: 1.55; }
+.follow-up-context p { margin: 3px 0 0; padding-top: 10px; border-top: 1px solid #e1e6ed; color: #526175; font-size: 12px; line-height: 1.6; }
+.follow-up-answer-form label { display: grid; gap: 7px; color: #69778a; font-size: 11px; font-weight: 600; }
+.follow-up-answer-form label small { color: var(--muted); font-weight: 400; }
+.follow-up-answer-form textarea { width: 100%; resize: vertical; padding: 11px 12px; border: 1px solid var(--line); border-radius: 5px; outline: none; color: var(--ink); background: #fff; font: inherit; font-size: 12px; line-height: 1.65; }
+.follow-up-answer-form textarea:focus { border-color: #8dafed; box-shadow: 0 0 0 3px #edf3ff; }
+.follow-up-form-error { padding: 0; margin: -4px 0 0; }
+@media (max-width: 560px) {
+  .follow-up-missing { align-items: stretch; flex-direction: column; }
+  .follow-up-missing > div { display: grid; grid-template-columns: 1fr 1fr; }
+  .follow-up-answer-form { padding: 20px; }
+}
+
 .library-page { display: flex; flex-direction: column; min-height: 100%; }
 .library-page > .library-layout { flex: 1 1 auto; height: auto; min-height: 0; margin-bottom: 24px; }
 @media (min-width: 851px) {

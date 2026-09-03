@@ -65,7 +65,21 @@ describe('question repository', () => {
     assert.equal(updated.difficulty, created.difficulty)
     assert.equal(updated.mastery, created.mastery)
     assert.equal(updated.answer, '新答案')
-    assert.deepEqual(updated.followUps, ['新追问'])
+    assert.deepEqual(updated.followUps, [{ question: '新追问', answer: '' }])
+    assert.equal(db.removeQuestion(created.id), true)
+  })
+
+  it('keeps follow-up answers and upgrades legacy string entries', () => {
+    const [created] = db.createQuestions([{
+      title: '追问兼容测试', category: '测试分类', difficulty: '中等', importance: 3,
+      answer: '答案', explanation: '解析', interviewAnswer: '建议回答',
+      followUps: ['历史追问', { question: '新追问', answer: '新回答' }],
+    }])
+
+    assert.deepEqual(db.getQuestion(created.id).followUps, [
+      { question: '历史追问', answer: '' },
+      { question: '新追问', answer: '新回答' },
+    ])
     assert.equal(db.removeQuestion(created.id), true)
   })
 

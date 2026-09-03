@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Sparkles } from 'lucide-react'
 import { MarkdownContent } from '../../components/markdown/MarkdownContent'
+import { FollowUpList } from '../../components/questions/FollowUpList'
 import { DIFFICULTY_ORDER, EMPTY_LEARNING_FILTERS, MASTERY_ORDER } from '../../constants/questions'
 import { useTextSelectionAction } from '../../features/ai/useTextSelectionAction'
 import type { Mastery, Question } from '../../types/question'
@@ -19,9 +20,11 @@ type Props = {
   onMarkMastery: (mastery: Mastery) => void
   onQuestionContextMenu: (event: React.MouseEvent<HTMLElement>, question: Question) => void
   onExplainSelection: (text: string, question: Question) => void
+  onEditFollowUpAnswer: (question: Question, index: number) => void
+  onGenerateFollowUpAnswer: (question: Question, index: number) => void
 }
 
-export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery, onQuestionContextMenu, onExplainSelection }: Props) {
+export function LearningPage({ questions, index, revealAnswer, stats, filters, categories, onFiltersChange, onRevealAnswer, onPrevious, onNext, onMarkMastery, onQuestionContextMenu, onExplainSelection, onEditFollowUpAnswer, onGenerateFollowUpAnswer }: Props) {
   const current = questions[index]
   const masteryTotal = Math.max(stats.totalQuestions, 1)
   const { containerRef, selectionAction } = useTextSelectionAction<HTMLDivElement>(current, onExplainSelection)
@@ -62,7 +65,7 @@ export function LearningPage({ questions, index, revealAnswer, stats, filters, c
       <div className="detail-topline"><span className="tag">{current.category}</span><span className={`difficulty ${current.difficulty}`}>{current.difficulty}</span><span className="importance">重要性 {current.importance}/5</span></div>
       <h2>{current.title}</h2>
       <div className="thinking-box"><Sparkles size={18} /><p>先用自己的话回答，建议控制在 1-2 分钟。</p></div>
-      <div className="learning-answer">{revealAnswer ? <div className="answer-content"><MarkdownContent>{current.answer}</MarkdownContent><h3>详细解析</h3><MarkdownContent>{current.explanation}</MarkdownContent><h3>面试时建议的回答</h3><MarkdownContent>{current.interviewAnswer}</MarkdownContent></div> : <button className="reveal-button" type="button" onClick={onRevealAnswer}>查看答案与解析 <ChevronDown size={14} /></button>}</div>
+      <div className="learning-answer">{revealAnswer ? <div className="answer-content"><MarkdownContent>{current.answer}</MarkdownContent><h3>详细解析</h3><MarkdownContent>{current.explanation}</MarkdownContent><h3>面试时建议的回答</h3><MarkdownContent>{current.interviewAnswer}</MarkdownContent><div className="learning-follow-ups"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">点击展开</span></div><FollowUpList question={current} onEditAnswer={onEditFollowUpAnswer} onGenerateAnswer={onGenerateFollowUpAnswer} /></div></div> : <button className="reveal-button" type="button" onClick={onRevealAnswer}>查看答案与解析 <ChevronDown size={14} /></button>}</div>
       <div className="learning-actions"><button className="quiet-button" type="button" disabled={index === 0} onClick={onPrevious}><ArrowLeft size={13} />上一题</button><div>{MASTERY_ORDER.map((item) => <button key={item} className={`mastery-chip ${current.mastery === item ? 'selected' : ''}`} type="button" onClick={() => onMarkMastery(item)}>{item}</button>)}</div><button className="primary-button" type="button" onClick={onNext}>下一题 <ArrowRight size={13} /></button></div>
     </div> : <div className="learning-empty-state"><Sparkles size={20} /><div><strong>当前筛选没有题目</strong><p>可以切换分类、难度或掌握程度，继续安排学习。</p></div><button className="primary-button" type="button" onClick={() => onFiltersChange(EMPTY_LEARNING_FILTERS)}>查看未学习题目 <ArrowRight size={13} /></button></div>}
     {selectionAction}

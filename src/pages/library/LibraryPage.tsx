@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, ChevronDown, ChevronUp, FilePenLine, ListFilter, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sparkles, Trash2, Upload } from 'lucide-react'
 import { MarkdownContent } from '../../components/markdown/MarkdownContent'
+import { FollowUpList } from '../../components/questions/FollowUpList'
 import { useTextSelectionAction } from '../../features/ai/useTextSelectionAction'
 import type { Mastery, Question } from '../../types/question'
 
@@ -31,6 +32,8 @@ type Props = {
   onRegenerateQuestion: (question: Question) => void
   onQuestionContextMenu: (event: React.MouseEvent<HTMLElement>, question: Question) => void
   onExplainSelection: (text: string, question: Question) => void
+  onEditFollowUpAnswer: (question: Question, index: number) => void
+  onGenerateFollowUpAnswer: (question: Question, index: number) => void
   onManageCategories: () => void
   onImportQuestions: () => void
   onStartPractice: () => void
@@ -41,7 +44,7 @@ export function LibraryPage(props: Props) {
     questions, filteredQuestions, selected, selectedId, categories, query, category, difficulty, mastery, todayLearned,
     showAnswer, onQueryChange, onCategoryChange, onDifficultyChange, onMasteryFilterChange,
     onSelectQuestion, onShowAnswerChange, onUpdateMastery, onCreateQuestion, onEditQuestion,
-    onDeleteQuestion, onRegenerateQuestion, onQuestionContextMenu, onExplainSelection, onManageCategories, onImportQuestions, onStartPractice,
+    onDeleteQuestion, onRegenerateQuestion, onQuestionContextMenu, onExplainSelection, onEditFollowUpAnswer, onGenerateFollowUpAnswer, onManageCategories, onImportQuestions, onStartPractice,
   } = props
   const [questionListCollapsed, setQuestionListCollapsed] = useState(() => localStorage.getItem(QUESTION_LIST_COLLAPSED_STORAGE_KEY) === 'true')
   const { containerRef, selectionAction } = useTextSelectionAction<HTMLElement>(selected, onExplainSelection)
@@ -89,7 +92,7 @@ export function LibraryPage(props: Props) {
             <div className="section-heading"><p className="section-label">答案与解析</p><button className="text-button" type="button" onClick={() => onShowAnswerChange(!showAnswer)}>{showAnswer ? '隐藏答案' : '展示答案'} {showAnswer ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button></div>
             {showAnswer ? <div className="answer-content"><MarkdownContent>{selected.answer}</MarkdownContent><h3>详细解析</h3><MarkdownContent>{selected.explanation}</MarkdownContent><h3>面试时建议的回答</h3><MarkdownContent>{selected.interviewAnswer}</MarkdownContent></div> : <div className="answer-locked"><Sparkles size={18} aria-hidden="true" /><p>先尝试自己回答，再查看答案和解析</p><button className="secondary-button" type="button" onClick={() => onShowAnswerChange(true)}>查看答案</button></div>}
           </div>
-          <div className="detail-section"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">可选</span></div><ul className="follow-ups">{selected.followUps.map((followUp) => <li key={followUp}>{followUp}<ArrowRight size={13} aria-hidden="true" /></li>)}</ul></div>
+          <div className="detail-section"><div className="section-heading"><p className="section-label">发散问题</p><span className="optional">点击展开</span></div><FollowUpList question={selected} onEditAnswer={onEditFollowUpAnswer} onGenerateAnswer={onGenerateFollowUpAnswer} /></div>
           <div className="detail-actions"><button className="danger-button" type="button" onClick={onDeleteQuestion}><Trash2 size={13} />删除</button><button className="quiet-button" type="button" onClick={() => onRegenerateQuestion(selected)}><Sparkles size={13} />重新生成答案</button><button className="quiet-button" type="button" onClick={() => onEditQuestion(selected)}><FilePenLine size={13} />编辑题目</button><button className="primary-button" type="button" onClick={onStartPractice}>开始练习 <ArrowRight size={13} /></button></div>
         </> : <div className="empty-state">从左侧选择一道题目开始</div>}
       </section>

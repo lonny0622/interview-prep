@@ -62,6 +62,7 @@ describe('LLM streaming route', () => {
         yield questions.slice(0, 3)
         yield questions.slice(3)
       },
+      generateFollowUpAnswer: async () => '',
       scoreAnswer: async () => ({}),
       fallbackScore: () => ({}),
     }
@@ -93,6 +94,7 @@ describe('LLM streaming route', () => {
       normalizeQuestionOutline: (value) => value,
       enrichQuestionBatch: async () => [],
       enrichQuestionBatchStream: async function* () {},
+      generateFollowUpAnswer: async () => '',
       explainSelectionStream: async function* (input) {
         assert.equal(input.selectedText, '稳定身份')
         assert.equal(input.question.title, 'React key')
@@ -110,5 +112,43 @@ describe('LLM streaming route', () => {
     assert.equal(response.statusCode, 200)
     assert.deepEqual(events.map((event) => event.type), ['start', 'delta', 'delta', 'complete'])
     assert.equal(events.filter((event) => event.type === 'delta').map((event) => event.content).join(''), '“稳定身份”指的是组件在列表中的唯一标识。\n\n它帮助 React 判断节点是否可以复用。')
+  })
+
+  it('passes complete question context and supplemental information when generating a follow-up answer', async () => {
+    const request = createRequest({
+      question: {
+        id: 'q-1', title: 'HTTP 缓存如何工作？', category: '网络', difficulty: '中等', importance: 5, mastery: '了解',
+        answer: '通过响应头控制。', explanation: '完整解析', interviewAnswer: '简短回答',
+        followUps: ['什么是协商缓存？'],
+      },
+      followUpQuestion: '什么是协商缓存？',
+      supplementalInfo: '请补充 ETag。',
+    })
+    request.url = '/api/llm/follow-up-answer'
+    request.destroyed = false
+    const response = createResponse()
+    const services = {
+      callModel: async () => [],
+      normalizeQuestionOutline: (value) => value,
+      enrichQuestionBatch: async () => [],
+      enrichQuestionBatchStream: async function* () {},
+      generateFollowUpAnswer: async (question, followUpQuestion, supplementalInfo) => {
+        assert.equal(question.category, '网络')
+        assert.equal(question.explanation, '完整解析')
+        assert.deepEqual(question.followUps, [{ question: '什么是协商缓存？', answer: '' }])
+        assert.equal(followUpQuestion, '什么是协商缓存？')
+        assert.equal(supplementalInfo, '请补充 ETag。')
+        return '协商缓存通过验证资源是否变化决定是否复用本地副本。'
+      },
+      scoreAnswer: async () => ({}),
+      fallbackScore: () => ({}),
+    }
+
+    const handled = await handleLlmRoutes(request, response, { baseUrl: 'https://llm.example.test', model: 'test-model', importModel: 'test-import-model', apiKey: 'key', provider: 'test' }, services)
+    const payload = JSON.parse(response.body)
+
+    assert.equal(handled, true)
+    assert.equal(response.statusCode, 200)
+    assert.match(payload.answer, /协商缓存/)
   })
 })

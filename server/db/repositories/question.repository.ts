@@ -1,6 +1,6 @@
 import '../schema.js'
 import { database } from '../connection.js'
-import type { Difficulty, GeneratedQuestionContentUpdate, Mastery, Question, QuestionCategory, QuestionDraft, QuestionFilters, QuestionPatch } from '../../domain/question.js'
+import { normalizeFollowUps, type Difficulty, type GeneratedQuestionContentUpdate, type Mastery, type Question, type QuestionCategory, type QuestionDraft, type QuestionFilters, type QuestionPatch } from '../../domain/question.js'
 
 type CategoryRow = {
   id: string
@@ -52,7 +52,7 @@ const toQuestion = (row: QuestionRow): Question => ({
   interviewAnswer: row.interview_answer,
   followUps: (() => {
     const value: unknown = JSON.parse(row.follow_ups || '[]')
-    return Array.isArray(value) ? value.map(String) : []
+    return normalizeFollowUps(value)
   })(),
 })
 
@@ -192,7 +192,7 @@ export function createQuestions(drafts: QuestionDraft[]): Question[] {
   database.exec('BEGIN')
   try {
     for (const draft of drafts) {
-      const question: Question = { id: crypto.randomUUID(), mastery: '未学习', ...draft, category: normalizeCategoryName(draft.category) || RESERVED_CATEGORY_NAME }
+      const question: Question = { id: crypto.randomUUID(), mastery: '未学习', ...draft, followUps: normalizeFollowUps(draft.followUps), category: normalizeCategoryName(draft.category) || RESERVED_CATEGORY_NAME }
       insertQuestion.run(question.id, question.title, question.category, question.difficulty, question.importance, question.mastery, question.answer, question.explanation, question.interviewAnswer, JSON.stringify(question.followUps), timestamp, timestamp)
       created.push(question)
     }
@@ -207,7 +207,7 @@ export function createQuestions(drafts: QuestionDraft[]): Question[] {
 export function editQuestion(id: string, patch: QuestionPatch): Question | null {
   const current = getQuestion(id)
   if (!current) return null
-  const next = { ...current, ...patch, id, category: normalizeCategoryName(patch.category ?? current.category) || RESERVED_CATEGORY_NAME }
+  const next = { ...current, ...patch, id, followUps: normalizeFollowUps(patch.followUps ?? current.followUps), category: normalizeCategoryName(patch.category ?? current.category) || RESERVED_CATEGORY_NAME }
   ensureCategory(next.category)
   updateQuestion.run(next.title, next.category, next.difficulty, next.importance, next.mastery, next.answer, next.explanation, next.interviewAnswer, JSON.stringify(next.followUps), now(), id)
   return getQuestion(id)
@@ -226,7 +226,7 @@ export function replaceGeneratedQuestionContent(updates: GeneratedQuestionConten
       String(item.answer || '').trim(),
       String(item.explanation || '').trim(),
       String(item.interviewAnswer || '').trim(),
-      JSON.stringify(Array.isArray(item.followUps) ? item.followUps.map(String).filter(Boolean).slice(0, 4) : []),
+      JSON.stringify(normalizeFollowUps(item.followUps, 4)),
       timestamp,
       item.id,
     )

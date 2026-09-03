@@ -26,6 +26,10 @@ export const scoringApi = {
 }
 
 export const llmApi = {
+  generateFollowUpAnswer: (payload: { question: Question; followUpQuestion: string; supplementalInfo?: string }) => apiRequest<{ answer: string; model: string }>('/api/llm/follow-up-answer', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   enrichQuestions: async (payload: EnrichQuestionsInput, onProgress?: (progress: EnrichQuestionsProgress) => void, signal?: AbortSignal) => {
     const drafts: QuestionDraft[] = []
     let consecutiveFailures = 0

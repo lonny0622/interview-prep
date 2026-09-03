@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { followUpQuestionsText, updateFollowUpQuestions } from '../../features/followUps'
 import type { Difficulty, QuestionEditorState } from '../../types/question'
 
 type Props = {
@@ -27,7 +28,7 @@ export function QuestionEditorModal({ editor, onChange, onClose, onSave }: Props
         <label className="full-field"><span>答案（Markdown）</span><textarea rows={5} value={editor.draft.answer} onChange={(event) => updateDraft({ answer: event.target.value })} /></label>
         <label className="full-field"><span>详细解析（Markdown）</span><textarea rows={5} value={editor.draft.explanation} onChange={(event) => updateDraft({ explanation: event.target.value })} /></label>
         <label className="full-field"><span>面试时建议的回答</span><textarea rows={4} value={editor.draft.interviewAnswer} onChange={(event) => updateDraft({ interviewAnswer: event.target.value })} /></label>
-        <label className="full-field"><span>发散问题（每行一个）</span><textarea rows={3} value={editor.draft.followUps.join('\n')} onChange={(event) => updateDraft({ followUps: event.target.value.split('\n').filter(Boolean) })} /></label>
+        <label className="full-field"><span>发散问题（每行一个，已有回答会保留）</span><textarea rows={3} value={followUpQuestionsText(editor.draft.followUps)} onChange={(event) => updateDraft({ followUps: updateFollowUpQuestions(editor.draft.followUps, event.target.value) })} /></label>
       </div>
       <div className="modal-actions">
         <button className="quiet-button" type="button" onClick={onClose}>取消</button>

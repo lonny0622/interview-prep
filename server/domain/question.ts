@@ -1,6 +1,28 @@
 export type Difficulty = '简单' | '中等' | '困难'
 export type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
 
+export type FollowUp = {
+  question: string
+  answer: string
+}
+
+const asRecord = (value: unknown): Record<string, unknown> => typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+
+/** 兼容历史 string[]，并过滤模型或客户端返回的无效追问。 */
+export function normalizeFollowUps(value: unknown, limit = 10): FollowUp[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (typeof entry === 'string') {
+      const question = entry.trim()
+      return question ? [{ question, answer: '' }] : []
+    }
+    const item = asRecord(entry)
+    const question = String(item.question ?? item.title ?? item.followUp ?? '').trim()
+    if (!question) return []
+    return [{ question, answer: String(item.answer ?? item.response ?? '').trim() }]
+  }).slice(0, limit)
+}
+
 export type Question = {
   id: string
   title: string
@@ -11,7 +33,7 @@ export type Question = {
   answer: string
   explanation: string
   interviewAnswer: string
-  followUps: string[]
+  followUps: FollowUp[]
 }
 
 export type QuestionDraft = Omit<Question, 'id' | 'mastery'>

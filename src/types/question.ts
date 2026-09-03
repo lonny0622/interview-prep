@@ -2,6 +2,11 @@ export type Difficulty = '简单' | '中等' | '困难'
 
 export type Mastery = '未学习' | '了解' | '熟悉' | '掌握'
 
+export type FollowUp = {
+  question: string
+  answer: string
+}
+
 export type Question = {
   id: string
   title: string
@@ -12,7 +17,7 @@ export type Question = {
   answer: string
   explanation: string
   interviewAnswer: string
-  followUps: string[]
+  followUps: FollowUp[]
 }
 
 export type QuestionDraft = Omit<Question, 'id' | 'mastery'>
@@ -49,4 +54,14 @@ export type QuestionRegeneratorState = {
   saving: boolean
   error: string
   progress: { completed: number; total: number; status?: string; retrying?: boolean }
+}
+
+export type FollowUpAnswerEditorState = {
+  questionId: string
+  followUpIndex: number
+  answer: string
+  supplementalInfo: string
+  generating: boolean
+  saving: boolean
+  error: string
 }

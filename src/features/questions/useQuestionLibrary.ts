@@ -4,12 +4,17 @@ import { questionApi } from '../../api/questionApi'
 import { studyApi } from '../../api/studyApi'
 import { EMPTY_QUESTION_DRAFT, QUESTION_IMPORT_STORAGE_KEY, QUESTION_STORAGE_KEY, QUESTION_VIEW_STORAGE_KEY, SEED_QUESTIONS } from '../../constants/questions'
 import { parseImportedQuestions, parseQuestionOutline, sanitizeGeneratedAnswer } from '../questionImport'
-import type { Mastery, Question, QuestionCategory, QuestionDraft, QuestionEditorState, QuestionImporterState, QuestionRegeneratorState } from '../../types/question'
+import { normalizeFollowUps } from '../followUps'
+import type { FollowUpAnswerEditorState, Mastery, Question, QuestionCategory, QuestionDraft, QuestionEditorState, QuestionImporterState, QuestionRegeneratorState } from '../../types/question'
+
+const normalizeQuestion = (question: Question): Question => ({ ...question, followUps: normalizeFollowUps(question.followUps) })
+const normalizeDraft = (draft: QuestionDraft): QuestionDraft => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer), followUps: normalizeFollowUps(draft.followUps) })
 
 function loadLocalQuestions(): Question[] {
   try {
     const saved = localStorage.getItem(QUESTION_STORAGE_KEY)
-    return saved ? JSON.parse(saved) as Question[] : SEED_QUESTIONS
+    const questions = saved ? JSON.parse(saved) as Question[] : SEED_QUESTIONS
+    return Array.isArray(questions) ? questions.map(normalizeQuestion) : SEED_QUESTIONS
   } catch {
     return SEED_QUESTIONS
   }
@@ -21,7 +26,7 @@ function loadQuestionImporter(): QuestionImporterState | null {
     if (!saved) return null
     const importer = JSON.parse(saved) as QuestionImporterState
     if (!importer || typeof importer.source !== 'string' || !Array.isArray(importer.drafts)) return null
-    const normalized = { ...importer, drafts: importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) })) }
+    const normalized = { ...importer, drafts: importer.drafts.map(normalizeDraft) }
     return importer.processing
       ? { ...normalized, processing: false, error: '上次生成被页面刷新中断，已保留进度，可继续生成剩余题目。' }
       : normalized
@@ -77,6 +82,7 @@ export function useQuestionLibrary() {
   const [editor, setEditor] = useState<QuestionEditorState | null>(null)
   const [importer, setImporter] = useState<QuestionImporterState | null>(loadQuestionImporter)
   const [regenerator, setRegenerator] = useState<QuestionRegeneratorState | null>(null)
+  const [followUpEditor, setFollowUpEditor] = useState<FollowUpAnswerEditorState | null>(null)
   const [categoryCatalog, setCategoryCatalog] = useState<QuestionCategory[]>([])
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
   const importAbortController = useRef<AbortController | null>(null)
@@ -84,8 +90,9 @@ export function useQuestionLibrary() {
   const importerCleanupDone = useRef(false)
 
   const refreshFromServer = useCallback(() => questionApi.list().then((payload) => {
-    setQuestions(payload.questions)
-    setSelectedId((current) => payload.questions.some((question) => question.id === current) ? current : payload.questions[0]?.id ?? '')
+    const normalized = payload.questions.map(normalizeQuestion)
+    setQuestions(normalized)
+    setSelectedId((current) => normalized.some((question) => question.id === current) ? current : normalized[0]?.id ?? '')
     setServerReady(true)
     return true
   }).catch(() => {
@@ -109,7 +116,7 @@ export function useQuestionLibrary() {
   useEffect(() => {
     if (!importer || importerCleanupDone.current) return
     importerCleanupDone.current = true
-    const drafts = importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))
+    const drafts = importer.drafts.map(normalizeDraft)
     if (drafts.some((draft, index) => draft.answer !== importer.drafts[index]?.answer)) setImporter({ ...importer, drafts })
   }, [importer])
 
@@ -128,7 +135,7 @@ export function useQuestionLibrary() {
   const selected = questions.find((question) => question.id === selectedId) ?? questions[0]
   const categories = ['全部分类', ...new Set([...categoryCatalog.map((item) => item.name), ...questions.map((question) => question.category)])]
   const filteredQuestions = useMemo(() => questions.filter((question) => {
-    const haystack = [question.title, question.category, question.answer, question.explanation, question.interviewAnswer, ...question.followUps].join('\n').toLowerCase()
+    const haystack = [question.title, question.category, question.answer, question.explanation, question.interviewAnswer, ...question.followUps.flatMap((item) => [item.question, item.answer])].join('\n').toLowerCase()
     return haystack.includes(query.toLowerCase())
       && (category === '全部分类' || question.category === category)
       && (difficulty === '全部难度' || question.difficulty === difficulty)
@@ -237,6 +244,44 @@ export function useQuestionLibrary() {
     }
   }
 
+  const openFollowUpAnswer = (question: Question, followUpIndex: number) => {
+    const followUp = question.followUps[followUpIndex]
+    if (!followUp) return
+    setFollowUpEditor({ questionId: question.id, followUpIndex, answer: followUp.answer, supplementalInfo: '', generating: false, saving: false, error: '' })
+  }
+
+  const generateFollowUpAnswer = async () => {
+    if (!followUpEditor || followUpEditor.generating || followUpEditor.saving) return
+    const question = questions.find((item) => item.id === followUpEditor.questionId)
+    const followUp = question?.followUps[followUpEditor.followUpIndex]
+    if (!question || !followUp) return
+    setFollowUpEditor({ ...followUpEditor, generating: true, error: '' })
+    try {
+      const payload = await llmApi.generateFollowUpAnswer({ question, followUpQuestion: followUp.question, supplementalInfo: followUpEditor.supplementalInfo })
+      setFollowUpEditor((current) => current ? { ...current, answer: payload.answer, generating: false, error: '' } : current)
+    } catch (error) {
+      setFollowUpEditor((current) => current ? { ...current, generating: false, error: error instanceof Error ? error.message : '追问回答生成失败。' } : current)
+    }
+  }
+
+  const saveFollowUpAnswer = async () => {
+    if (!followUpEditor || !followUpEditor.answer.trim() || followUpEditor.generating || followUpEditor.saving) return
+    const question = questions.find((item) => item.id === followUpEditor.questionId)
+    if (!question?.followUps[followUpEditor.followUpIndex]) return
+    const followUps = question.followUps.map((item, index) => index === followUpEditor.followUpIndex ? { ...item, answer: followUpEditor.answer.trim() } : item)
+    setFollowUpEditor({ ...followUpEditor, saving: true, error: '' })
+    try {
+      const payload = await questionApi.update(question.id, { followUps })
+      const updated = normalizeQuestion(payload.question)
+      setQuestions((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setServerReady(true)
+      setFollowUpEditor(null)
+    } catch (error) {
+      setServerReady(false)
+      setFollowUpEditor((current) => current ? { ...current, saving: false, error: error instanceof Error ? error.message : '追问回答保存失败。' } : current)
+    }
+  }
+
   const importPreview = () => {
     if (!importer) return
     try {
@@ -265,7 +310,7 @@ export function useQuestionLibrary() {
     }
     const existingDrafts = importer.step === 'preview'
       && importer.drafts.every((draft, index) => draft.title === outline.questions[index]?.title)
-      ? importer.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))
+      ? importer.drafts.map(normalizeDraft)
       : []
     if (existingDrafts.length >= outline.questions.length) {
       setImporter({ ...importer, processing: false, error: '', progress: { completed: existingDrafts.length, total: outline.questions.length } })
@@ -287,12 +332,12 @@ export function useQuestionLibrary() {
         },
         (progress) => setImporter((current) => current ? {
           ...current,
-          drafts: [...existingDrafts, ...progress.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))],
+          drafts: [...existingDrafts, ...progress.drafts.map(normalizeDraft)],
           progress: { completed: existingDrafts.length + progress.completed, total: outline.questions.length, status: progress.status, retrying: progress.retrying },
         } : current),
         controller.signal,
       )
-      const completeDrafts = [...existingDrafts, ...payload.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))]
+      const completeDrafts = [...existingDrafts, ...payload.drafts.map(normalizeDraft)]
       if (completeDrafts.length !== outline.questions.length) throw new Error('AI 返回的题目数量不完整，请继续生成。')
       setImporter({ step: 'preview', source, category: outline.category, drafts: completeDrafts, error: '', processing: false, progress: { completed: completeDrafts.length, total: outline.questions.length } })
     } catch (error) {
@@ -353,12 +398,12 @@ export function useQuestionLibrary() {
         },
         (progress) => setRegenerator((current) => current ? {
           ...current,
-          drafts: [...existingDrafts, ...progress.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))],
+          drafts: [...existingDrafts, ...progress.drafts.map(normalizeDraft)],
           progress: { completed: existingDrafts.length + progress.completed, total: sourceQuestions.length, status: progress.status, retrying: progress.retrying },
         } : current),
         controller.signal,
       )
-      const completeDrafts = [...existingDrafts, ...payload.drafts.map((draft) => ({ ...draft, answer: sanitizeGeneratedAnswer(draft.answer) }))]
+      const completeDrafts = [...existingDrafts, ...payload.drafts.map(normalizeDraft)]
       if (completeDrafts.length !== sourceQuestions.length) throw new Error('AI 返回的题目数量不完整，请继续生成。')
       setRegenerator((current) => current ? { ...current, drafts: completeDrafts, processing: false, error: '', progress: { completed: completeDrafts.length, total: sourceQuestions.length } } : current)
     } catch (error) {
@@ -430,9 +475,10 @@ export function useQuestionLibrary() {
   return {
     questions, setQuestions, serverReady, setServerReady,
     selected, selectedId, showAnswer, query, category, difficulty, mastery,
-    categories, filteredQuestions, editor, importer, regenerator, categoryCatalog, categoryManagerOpen,
+    categories, filteredQuestions, editor, importer, regenerator, followUpEditor, categoryCatalog, categoryManagerOpen,
     setShowAnswer, setQuery, setCategory, setDifficulty, setMastery, setEditor, setImporter,
     setCategoryManagerOpen, setSelectedId, updateMastery, openEditor, createCategory,
+    setFollowUpEditor, openFollowUpAnswer, generateFollowUpAnswer, saveFollowUpAnswer,
     renameCategory, deleteCategory, moveCategoryQuestions, saveQuestion, deleteQuestion, importPreview, importWithAi, closeImporter, confirmImport,
     setRegenerator, regenerateSingleQuestion, regenerateCategory, beginRegeneration, continueRegeneration, closeRegenerator, confirmRegeneration,
   }

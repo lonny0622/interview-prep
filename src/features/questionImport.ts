@@ -1,4 +1,5 @@
 import type { Difficulty, QuestionDraft } from '../types/question'
+import { normalizeFollowUps } from './followUps'
 
 export type DifficultyHint = '简单' | '中等' | '困难'
 
@@ -106,7 +107,7 @@ function normalizeImportedQuestion(value: unknown): QuestionDraft {
     answer: sanitizeGeneratedAnswer(item.answer ?? item.answer_md),
     explanation: String(item.explanation ?? item.explanation_md ?? '').trim(),
     interviewAnswer: String(item.interviewAnswer ?? item.interview_answer ?? '').trim(),
-    followUps: Array.isArray(followUps) ? followUps.map(String).filter(Boolean) : [],
+    followUps: normalizeFollowUps(followUps),
   }
 }
 
@@ -122,7 +123,10 @@ function parseMarkdownQuestion(block: string): QuestionDraft {
     answer: section('答案'),
     explanation: section('详细解析|解析'),
     interviewAnswer: section('面试时建议的回答|建议回答'),
-    followUps: section('发散问题').split('\n').map((line) => line.replace(/^[-*]\s*/, '').trim()).filter(Boolean),
+    followUps: section('发散问题').split('\n').map((line) => line.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map((line) => {
+      const [question, ...answerParts] = line.split(/\s*(?:=>|\|\||｜)\s*/)
+      return { question: question.trim(), answer: answerParts.join(' ').trim() }
+    }).filter((item) => item.question),
   }
 }
 
