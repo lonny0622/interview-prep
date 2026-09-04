@@ -3,6 +3,7 @@ import type { InterviewNextAction, InterviewReport, InterviewSession, InterviewS
 import { apiRequest, streamJsonLines } from './http'
 
 type EnrichQuestionsInput = { category: string; questions: Array<{ title: string; difficulty: string }>; context?: string }
+type FollowUpGenerationQuestion = Pick<Question, 'title' | 'category' | 'difficulty' | 'answer'>
 export type EnrichQuestionsProgress = { drafts: QuestionDraft[]; completed: number; total: number; status?: string; retrying?: boolean }
 type EnrichQuestionsEvent =
   | { type: 'start'; total: number }
@@ -26,7 +27,7 @@ export const scoringApi = {
 }
 
 export const llmApi = {
-  generateFollowUpAnswer: (payload: { question: Question; followUpQuestion: string; supplementalInfo?: string }) => apiRequest<{ answer: string; model: string }>('/api/llm/follow-up-answer', {
+  generateFollowUpAnswer: (payload: { question: FollowUpGenerationQuestion; followUpQuestion: string; supplementalInfo?: string }) => apiRequest<{ answer: string; model: string }>('/api/llm/follow-up-answer', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

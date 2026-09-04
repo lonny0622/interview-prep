@@ -21,7 +21,7 @@ import { decideNextAction as decideNextActionService, generateInterviewBlueprint
 import { enrichQuestionBatch as enrichQuestionBatchService, enrichQuestionBatchStream as enrichQuestionBatchStreamService, generateFollowUpAnswer as generateFollowUpAnswerService, normalizeQuestionOutline, parseQuestionSource } from './services/llm/questions.js'
 import { fallbackScore, scoreAnswer as scoreAnswerService } from './services/llm/scoring.js'
 import { explainSelectionStream as explainSelectionStreamService } from './services/llm/explanation.js'
-import type { Question, QuestionOutline, ScoreQuestion } from './domain/question.js'
+import type { FollowUpAnswerContext, QuestionOutline, ScoreQuestion } from './domain/question.js'
 import type { InterviewProfile, InterviewSession, InterviewTurn } from './domain/interview.js'
 
 const { rootDir, isProduction, host, provider, baseUrl, model, importModel, apiKey, sttProvider, sttBaseUrl, sttModel, sttApiKey, ffmpegPath, sttRequestTimeoutMs, port, requestTimeoutMs, auth } = appConfig
@@ -36,7 +36,7 @@ const generateInterviewReport = (session: InterviewSession, turns: InterviewTurn
 const callModel = (source: string) => parseQuestionSource(source, importModel)
 const enrichQuestionBatch = (outlines: QuestionOutline[], category: string, context?: string) => enrichQuestionBatchService(outlines, category, importModel, context)
 const enrichQuestionBatchStream = (outlines: QuestionOutline[], category: string, context?: string, signal?: AbortSignal) => enrichQuestionBatchStreamService(outlines, category, importModel, undefined, context, signal)
-const generateFollowUpAnswer = (question: Question, followUpQuestion: string, supplementalInfo: string) => generateFollowUpAnswerService(question, followUpQuestion, supplementalInfo, importModel)
+const generateFollowUpAnswer = (question: FollowUpAnswerContext, followUpQuestion: string, supplementalInfo: string) => generateFollowUpAnswerService(question, followUpQuestion, supplementalInfo, importModel)
 const scoreAnswer = (question: ScoreQuestion, answer: string) => scoreAnswerService(question, answer, model)
 const explainSelectionStream = (input: import('./domain/explanation.js').ExplainSelectionInput, signal?: AbortSignal) => explainSelectionStreamService(input, llmConfig, signal)
 let shuttingDown = false

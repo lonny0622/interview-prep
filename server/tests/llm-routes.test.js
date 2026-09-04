@@ -114,7 +114,7 @@ describe('LLM streaming route', () => {
     assert.equal(events.filter((event) => event.type === 'delta').map((event) => event.content).join(''), '“稳定身份”指的是组件在列表中的唯一标识。\n\n它帮助 React 判断节点是否可以复用。')
   })
 
-  it('passes complete question context and supplemental information when generating a follow-up answer', async () => {
+  it('passes the main answer but excludes detailed sections when generating a follow-up answer', async () => {
     const request = createRequest({
       question: {
         id: 'q-1', title: 'HTTP 缓存如何工作？', category: '网络', difficulty: '中等', importance: 5, mastery: '了解',
@@ -134,8 +134,11 @@ describe('LLM streaming route', () => {
       enrichQuestionBatchStream: async function* () {},
       generateFollowUpAnswer: async (question, followUpQuestion, supplementalInfo) => {
         assert.equal(question.category, '网络')
-        assert.equal(question.explanation, '完整解析')
-        assert.deepEqual(question.followUps, [{ question: '什么是协商缓存？', answer: '' }])
+        assert.equal(question.title, 'HTTP 缓存如何工作？')
+        assert.equal(question.answer, '通过响应头控制。')
+        assert.equal('explanation' in question, false)
+        assert.equal('interviewAnswer' in question, false)
+        assert.equal('followUps' in question, false)
         assert.equal(followUpQuestion, '什么是协商缓存？')
         assert.equal(supplementalInfo, '请补充 ETag。')
         return '协商缓存通过验证资源是否变化决定是否复用本地副本。'

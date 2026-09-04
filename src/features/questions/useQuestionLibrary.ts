@@ -257,7 +257,11 @@ export function useQuestionLibrary() {
     if (!question || !followUp) return
     setFollowUpEditor({ ...followUpEditor, generating: true, error: '' })
     try {
-      const payload = await llmApi.generateFollowUpAnswer({ question, followUpQuestion: followUp.question, supplementalInfo: followUpEditor.supplementalInfo })
+      const payload = await llmApi.generateFollowUpAnswer({
+        question: { title: question.title, category: question.category, difficulty: question.difficulty, answer: question.answer },
+        followUpQuestion: followUp.question,
+        supplementalInfo: followUpEditor.supplementalInfo,
+      })
       setFollowUpEditor((current) => current ? { ...current, answer: payload.answer, generating: false, error: '' } : current)
     } catch (error) {
       setFollowUpEditor((current) => current ? { ...current, generating: false, error: error instanceof Error ? error.message : '追问回答生成失败。' } : current)

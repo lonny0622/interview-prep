@@ -41,6 +41,8 @@ export type QuestionPatch = Partial<Omit<Question, 'id'>>
 
 export type GeneratedQuestionContentUpdate = Pick<Question, 'id' | 'answer' | 'explanation' | 'interviewAnswer' | 'followUps' | 'importance'>
 
+export type FollowUpAnswerContext = Pick<Question, 'title' | 'category' | 'difficulty' | 'answer'>
+
 export type QuestionOutline = Pick<QuestionDraft, 'title' | 'difficulty' | 'category'>
 
 export type QuestionCategory = {

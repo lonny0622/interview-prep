@@ -4,14 +4,14 @@ import { jsonResponse } from '../http/response.js'
 import { errorMessage } from '../http/errors.js'
 import { matchesRoute } from '../http/routing.js'
 import type { ExplainSelectionInput } from '../domain/explanation.js'
-import { normalizeFollowUps, type Question, type QuestionDraft, type QuestionOutline, type ScoreQuestion, type ScoreResult } from '../domain/question.js'
+import { normalizeFollowUps, type FollowUpAnswerContext, type Question, type QuestionDraft, type QuestionOutline, type ScoreQuestion, type ScoreResult } from '../domain/question.js'
 
 type LlmServices = {
   callModel: (source: string) => Promise<QuestionDraft[]>
   normalizeQuestionOutline: (questions: unknown, category: string) => QuestionOutline[]
   enrichQuestionBatch: (questions: QuestionOutline[], category: string, context?: string) => Promise<QuestionDraft[]>
   enrichQuestionBatchStream: (questions: QuestionOutline[], category: string, context?: string, signal?: AbortSignal) => AsyncIterable<QuestionDraft[]>
-  generateFollowUpAnswer: (question: Question, followUpQuestion: string, supplementalInfo: string) => Promise<string>
+  generateFollowUpAnswer: (question: FollowUpAnswerContext, followUpQuestion: string, supplementalInfo: string) => Promise<string>
   explainSelectionStream?: (input: ExplainSelectionInput, signal?: AbortSignal) => AsyncIterable<string>
   scoreAnswer: (question: ScoreQuestion, answer: string) => Promise<ScoreResult>
   fallbackScore: (question: ScoreQuestion, answer: string) => ScoreResult
@@ -101,17 +101,11 @@ export async function handleLlmRoutes(request: IncomingMessage, response: Server
         jsonResponse(response, 400, { error: '完整主问题、分类和追问内容必填。' })
         return true
       }
-      const question: Question = {
-        id: String(source.id || ''),
+      const question: FollowUpAnswerContext = {
         title: String(source.title || '').trim().slice(0, 4_000),
         category: String(source.category || '').trim().slice(0, 200),
         difficulty: source.difficulty === '简单' || source.difficulty === '困难' ? source.difficulty : '中等',
-        importance: Math.min(5, Math.max(1, Number(source.importance) || 3)),
-        mastery: source.mastery === '了解' || source.mastery === '熟悉' || source.mastery === '掌握' ? source.mastery : '未学习',
         answer: String(source.answer || '').slice(0, 10_000),
-        explanation: String(source.explanation || '').slice(0, 20_000),
-        interviewAnswer: String(source.interviewAnswer || '').slice(0, 8_000),
-        followUps: normalizeFollowUps(source.followUps),
       }
       const answer = await services.generateFollowUpAnswer(question, followUpQuestion, String(body.supplementalInfo || '').trim().slice(0, 4_000))
       jsonResponse(response, 200, { answer, model: config.importModel })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { EXPLANATION_SYSTEM_PROMPT } from '../../dist-server/services/llm/explanation.js'
-import { enrichQuestionBatchStream, normalizeQuestionOutline, QUESTION_CATEGORY_GROUNDING_INSTRUCTION, QUESTION_IMPORTANCE_RUBRIC, sanitizeEnrichedAnswer } from '../../dist-server/services/llm/questions.js'
+import { enrichQuestionBatchStream, FOLLOW_UP_ANSWER_INSTRUCTION, normalizeQuestionOutline, QUESTION_CATEGORY_GROUNDING_INSTRUCTION, QUESTION_IMPORTANCE_RUBRIC, sanitizeEnrichedAnswer } from '../../dist-server/services/llm/questions.js'
 import { fallbackScore } from '../../dist-server/services/llm/scoring.js'
 
 describe('selection explanation prompt', () => {
@@ -27,6 +27,16 @@ describe('question generation input', () => {
     assert.match(QUESTION_IMPORTANCE_RUBRIC, /1=非常边缘/)
     assert.match(QUESTION_IMPORTANCE_RUBRIC, /不能照抄 JSON 示例/)
     assert.match(QUESTION_IMPORTANCE_RUBRIC, /不能简单等同于 difficulty/)
+  })
+
+  it('keeps follow-up answers short and easy to remember', () => {
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /与同一道题的主答案保持口径一致/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /1 句结论/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /2-4 个最关键/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /150-300 个中文字符/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /复杂问题可以适当增加/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /不要主动展开大段背景/)
+    assert.match(FOLLOW_UP_ANSWER_INSTRUCTION, /除非追问明确要求/)
   })
 
   it('normalizes titles, difficulty and category', () => {

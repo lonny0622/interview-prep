@@ -112,7 +112,12 @@ body { overflow: hidden; }
 .follow-up-context { display: grid; gap: 7px; padding: 15px; border-radius: 6px; background: var(--soft); }
 .follow-up-context span { color: var(--blue); font-size: 9px; }
 .follow-up-context strong { color: var(--ink); font-size: 12px; line-height: 1.55; }
-.follow-up-context p { margin: 3px 0 0; padding-top: 10px; border-top: 1px solid #e1e6ed; color: #526175; font-size: 12px; line-height: 1.6; }
+.follow-up-main-answer, .follow-up-target { margin-top: 3px; padding-top: 10px; border-top: 1px solid #e1e6ed; }
+.follow-up-main-answer { max-height: 150px; overflow: auto; color: #647287; font-size: 11px; line-height: 1.65; }
+.follow-up-main-answer small, .follow-up-target small { display: block; margin-bottom: 5px; color: #8a96a6; font-size: 9px; font-weight: 600; }
+.follow-up-main-answer p { margin: 0 0 7px; }
+.follow-up-main-answer p:last-child { margin-bottom: 0; }
+.follow-up-target p { margin: 0; color: #526175; font-size: 12px; line-height: 1.6; }
 .follow-up-answer-form label { display: grid; gap: 7px; color: #69778a; font-size: 11px; font-weight: 600; }
 .follow-up-answer-form label small { color: var(--muted); font-weight: 400; }
 .follow-up-answer-form textarea { width: 100%; resize: vertical; padding: 11px 12px; border: 1px solid var(--line); border-radius: 5px; outline: none; color: var(--ink); background: #fff; font: inherit; font-size: 12px; line-height: 1.65; }
