@@ -96,15 +96,42 @@ export function parseImportedQuestions(source = ''): QuestionDraft[] {
     .filter((item) => item.title)
 }
 
-function normalizeImportedQuestion(value: unknown): QuestionDraft {
+export function parseStructuredQuestion(source = ''): QuestionDraft {
+  const raw = String(source || '').trim()
+  if (!raw) throw new Error('请粘贴一道题目的 JSON 数据。')
+  const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  const content = fenced?.[1]?.trim() || raw
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    throw new Error('JSON 格式不正确，请检查引号、逗号和括号。')
+  }
+
+  const items = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { questions?: unknown }).questions)
+      ? (parsed as { questions: unknown[] }).questions
+      : [parsed]
+  if (items.length !== 1) throw new Error('单题编辑只能覆盖一道题，请只保留一个 JSON 对象。')
+  if (!items[0] || typeof items[0] !== 'object' || Array.isArray(items[0])) throw new Error('JSON 内容必须是一道题目的对象。')
+
+  const draft = normalizeImportedQuestion(items[0], false)
+  if (!draft.title) throw new Error('结构化数据中缺少 title（或 question）字段。')
+  return draft
+}
+
+function normalizeImportedQuestion(value: unknown, sanitizeAnswer = true): QuestionDraft {
   const item = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const followUps = item.followUps ?? item.follow_up_questions
+  const answer = item.answer ?? item.answer_md
   return {
     title: String(item.title ?? item.question ?? '').trim(),
     category: String(item.category ?? '未分类').trim(),
     difficulty: normalizeDifficulty(item.difficulty),
     importance: normalizeImportance(item.importance),
-    answer: sanitizeGeneratedAnswer(item.answer ?? item.answer_md),
+    answer: sanitizeAnswer ? sanitizeGeneratedAnswer(answer) : String(answer ?? '').trim(),
     explanation: String(item.explanation ?? item.explanation_md ?? '').trim(),
     interviewAnswer: String(item.interviewAnswer ?? item.interview_answer ?? '').trim(),
     followUps: normalizeFollowUps(followUps),
