@@ -1,7 +1,7 @@
 import { ArrowLeft, Check, FileUp, Plus, Sparkles, X } from 'lucide-react'
 import { useState } from 'react'
-import { followUpQuestionsText, updateFollowUpQuestions } from '../../features/followUps'
 import type { QuestionDraft, QuestionImporterState } from '../../types/question'
+import { FollowUpEditorFields } from './FollowUpEditorFields'
 
 type Props = {
   state: QuestionImporterState
@@ -30,9 +30,6 @@ export function QuestionImportModal({ state, categories, onChange, onClose, onCr
   const updateDraft = (index: number, patch: Partial<QuestionDraft>) => onChange({
     ...state,
     drafts: drafts.map((draft, draftIndex) => draftIndex === index ? { ...draft, ...patch } : draft),
-  })
-  const updateFollowUps = (index: number, value: string) => updateDraft(index, {
-    followUps: updateFollowUpQuestions(drafts[index]?.followUps || [], value),
   })
   const createCategory = async () => {
     const name = newCategory.trim()
@@ -80,7 +77,7 @@ export function QuestionImportModal({ state, categories, onChange, onClose, onCr
               <label className="full-field"><span>答案（Markdown）</span><textarea rows={5} value={draft.answer} onChange={(event) => updateDraft(index, { answer: event.target.value })} /></label>
               <label className="full-field"><span>详细解析（Markdown，必须包含速记）</span><textarea rows={9} value={draft.explanation} onChange={(event) => updateDraft(index, { explanation: event.target.value })} /></label>
               <label className="full-field"><span>面试中建议的回答</span><textarea rows={4} value={draft.interviewAnswer} onChange={(event) => updateDraft(index, { interviewAnswer: event.target.value })} /></label>
-              <label className="full-field"><span>发散问题（每行一个，AI 已同步生成简答）</span><textarea rows={3} value={followUpQuestionsText(draft.followUps)} onChange={(event) => updateFollowUps(index, event.target.value)} /></label>
+              <FollowUpEditorFields followUps={draft.followUps} onChange={(followUps) => updateDraft(index, { followUps })} hint="解析或 AI 生成的追问答案会显示在对应问题下方" />
             </div>
           </article>)}
         </div>

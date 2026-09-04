@@ -1,6 +1,6 @@
 import { Check, RefreshCw, Sparkles, X } from 'lucide-react'
-import { followUpQuestionsText, updateFollowUpQuestions } from '../../features/followUps'
 import type { QuestionDraft, QuestionRegeneratorState } from '../../types/question'
+import { FollowUpEditorFields } from './FollowUpEditorFields'
 
 type Props = {
   state: QuestionRegeneratorState
@@ -16,7 +16,6 @@ export function QuestionRegenerateModal({ state, onChange, onClose, onStart, onC
     ...state,
     drafts: state.drafts.map((draft, draftIndex) => draftIndex === index ? { ...draft, ...patch } : draft),
   })
-  const updateFollowUps = (index: number, value: string) => updateDraft(index, { followUps: updateFollowUpQuestions(state.drafts[index]?.followUps || [], value) })
   const completed = state.progress.completed
   const total = state.progress.total
 
@@ -40,7 +39,7 @@ export function QuestionRegenerateModal({ state, onChange, onClose, onStart, onC
             <label><span>重要性</span><input type="number" min="1" max="5" disabled={state.processing || state.saving} value={draft.importance} onChange={(event) => updateDraft(index, { importance: Math.min(5, Math.max(1, Number(event.target.value) || 1)) })} /></label>
             <label className="full-field"><span>详细解析（Markdown）</span><textarea rows={9} disabled={state.processing || state.saving} value={draft.explanation} onChange={(event) => updateDraft(index, { explanation: event.target.value })} /></label>
             <label className="full-field"><span>面试中建议的回答</span><textarea rows={4} disabled={state.processing || state.saving} value={draft.interviewAnswer} onChange={(event) => updateDraft(index, { interviewAnswer: event.target.value })} /></label>
-            <label className="full-field"><span>发散问题（每行一个，AI 已同步生成简答）</span><textarea rows={3} disabled={state.processing || state.saving} value={followUpQuestionsText(draft.followUps)} onChange={(event) => updateFollowUps(index, event.target.value)} /></label>
+            <FollowUpEditorFields followUps={draft.followUps} disabled={state.processing || state.saving} onChange={(followUps) => updateDraft(index, { followUps })} hint="重新生成的追问答案会显示在对应问题下方" />
           </div>
         </article>)}
       </div>}
