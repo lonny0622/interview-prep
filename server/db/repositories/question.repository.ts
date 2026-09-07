@@ -130,18 +130,28 @@ export function updateCategory(id: string, name: unknown): QuestionCategory | nu
 
 export function deleteCategory(id: string) {
   const current = getCategoryById(id)
-  if (!current) return false
+  if (!current) return null
   if (current.name === RESERVED_CATEGORY_NAME) {
     throw categoryError('“未分类”是系统保留分类，不能删除。', 'CATEGORY_RESERVED')
   }
-  const countRow = database.prepare('SELECT COUNT(*) AS count FROM questions WHERE category = ? COLLATE NOCASE').get(current.name) as { count?: number } | undefined
-  const count = Number(countRow?.count ?? 0)
-  if (count > 0) {
-    const error = new Error(`分类下还有 ${count} 道题目，不能删除。`) as Error & { code?: string }
-    error.code = 'CATEGORY_IN_USE'
+
+  let deletedQuestions = 0
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    database.prepare(`DELETE FROM learning_progress WHERE question_id IN (
+      SELECT id FROM questions WHERE category = ? COLLATE NOCASE
+    )`).run(current.name)
+    database.prepare(`DELETE FROM practice_answers WHERE question_id IN (
+      SELECT id FROM questions WHERE category = ? COLLATE NOCASE
+    )`).run(current.name)
+    deletedQuestions = Number(database.prepare('DELETE FROM questions WHERE category = ? COLLATE NOCASE').run(current.name).changes)
+    database.prepare('DELETE FROM question_categories WHERE id = ?').run(id)
+    database.exec('COMMIT')
+  } catch (error) {
+    database.exec('ROLLBACK')
     throw error
   }
-  return database.prepare('DELETE FROM question_categories WHERE id = ?').run(id).changes > 0
+  return { deletedQuestions }
 }
 
 export function moveCategoryQuestions(sourceId: string, targetId: string) {

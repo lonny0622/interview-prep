@@ -48,7 +48,10 @@ export function CategoryManagerModal({ categories, onClose, onCreate, onRename, 
   }
 
   const remove = (category: QuestionCategory) => {
-    if (category.questionCount > 0) return
+    const message = category.questionCount > 0
+      ? `确认删除“${category.name}”分类，并永久删除其中的 ${category.questionCount} 道题目？此操作无法撤销。`
+      : `确认删除“${category.name}”分类？此操作无法撤销。`
+    if (!window.confirm(message)) return
     void run(`delete:${category.id}`, () => onDelete(category))
   }
 
@@ -89,10 +92,10 @@ export function CategoryManagerModal({ categories, onClose, onCreate, onRename, 
             <div className="category-row-actions"><button className="quiet-button" type="button" disabled={pending !== null || !targetCategoryId} onClick={() => moveQuestions(category)}><Check size={13} />确认迁移</button><button className="icon-button" type="button" title="取消迁移" onClick={() => { setMovingId(null); setTargetCategoryId('') }}><X size={14} /></button></div>
           </div>
           if (editingId === category.id) return <div className="category-row" key={category.id}><input value={editingName} autoFocus onChange={(event) => { setEditingName(event.target.value); setError('') }} onKeyDown={(event) => { if (event.key === 'Enter') rename(category); if (event.key === 'Escape') setEditingId(null) }} /><div className="category-row-actions"><button className="quiet-button" type="button" disabled={pending !== null} onClick={() => rename(category)}><Check size={13} />保存</button><button className="icon-button" type="button" title="取消编辑" onClick={() => setEditingId(null)}><X size={14} /></button></div></div>
-          return <div className="category-row" key={category.id}><div><div className="category-name-line"><strong>{category.name}</strong>{reserved && <span className="category-reserved-badge">系统保留</span>}</div><span>{category.questionCount} 道题目</span></div><div className="category-row-actions"><button className="quiet-button" type="button" title={`重新生成“${category.name}”分类下的题目内容`} disabled={pending !== null || category.questionCount === 0} onClick={() => onRegenerate(category)}><Sparkles size={13} />重生成</button>{reserved ? <button className="quiet-button" type="button" title={category.questionCount ? '批量迁移题目' : '当前没有需要迁移的题目'} disabled={pending !== null || category.questionCount === 0 || categories.length < 2} onClick={() => startMove(category)}><MoveRight size={13} />迁移题目</button> : <><button className="icon-button" type="button" title={`编辑${category.name}`} disabled={pending !== null} onClick={() => { setEditingId(category.id); setEditingName(category.name); setMovingId(null); setError('') }}><Pencil size={14} /></button><button className="icon-button danger-icon" type="button" title={category.questionCount ? '分类下有题目，不能删除' : `删除${category.name}`} disabled={pending !== null || category.questionCount > 0} onClick={() => remove(category)}><Trash2 size={14} /></button></>}</div></div>
+          return <div className="category-row" key={category.id}><div><div className="category-name-line"><strong>{category.name}</strong>{reserved && <span className="category-reserved-badge">系统保留</span>}</div><span>{category.questionCount} 道题目</span></div><div className="category-row-actions"><button className="quiet-button" type="button" title={`重新生成“${category.name}”分类下的题目内容`} disabled={pending !== null || category.questionCount === 0} onClick={() => onRegenerate(category)}><Sparkles size={13} />重生成</button>{reserved ? <button className="quiet-button" type="button" title={category.questionCount ? '批量迁移题目' : '当前没有需要迁移的题目'} disabled={pending !== null || category.questionCount === 0 || categories.length < 2} onClick={() => startMove(category)}><MoveRight size={13} />迁移题目</button> : <><button className="icon-button" type="button" title={`编辑${category.name}`} disabled={pending !== null} onClick={() => { setEditingId(category.id); setEditingName(category.name); setMovingId(null); setError('') }}><Pencil size={14} /></button><button className="icon-button danger-icon" type="button" title={category.questionCount ? `删除${category.name}及其中全部题目` : `删除${category.name}`} disabled={pending !== null} onClick={() => remove(category)}><Trash2 size={14} /></button></>}</div></div>
         })}</div>
         {!categories.length && <p className="profile-empty">还没有分类，先创建一个吧。</p>}
-        <p className="category-manager-hint">“未分类”是系统保留分类，不能改名或删除，可将其中题目批量迁移到其他分类。普通分类重命名时会同步更新其题目。</p>
+        <p className="category-manager-hint">“未分类”是系统保留分类，不能改名或删除，可将其中题目批量迁移到其他分类。删除普通分类时会同时删除其中的全部题目。</p>
       </div>
       <div className="modal-actions"><button className="quiet-button" type="button" onClick={onClose}>完成</button></div>
     </section>

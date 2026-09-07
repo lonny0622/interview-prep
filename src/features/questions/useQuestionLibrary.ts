@@ -182,7 +182,14 @@ export function useQuestionLibrary() {
   const deleteCategory = async (categoryToDelete: QuestionCategory) => {
     await questionApi.deleteCategory(categoryToDelete.id)
     setCategoryCatalog((current) => current.filter((item) => item.id !== categoryToDelete.id))
+    setQuestions((current) => {
+      const remaining = current.filter((question) => question.category.toLocaleLowerCase() !== categoryToDelete.name.toLocaleLowerCase())
+      setSelectedId((currentId) => remaining.some((question) => question.id === currentId) ? currentId : remaining[0]?.id ?? '')
+      return remaining
+    })
     setCategory((current) => current === categoryToDelete.name ? '全部分类' : current)
+    setShowAnswer(false)
+    setServerReady(true)
   }
 
   const moveCategoryQuestions = async (source: QuestionCategory, targetId: string) => {

@@ -39,12 +39,12 @@ export async function handleQuestionRoutes(request: IncomingMessage, response: S
   }
   if (matchesRoute(request, 'DELETE', /^\/api\/categories\/[^/]+$/)) {
     try {
-      const deleted = deleteCategory(lastPathSegment(request))
-      jsonResponse(response, deleted ? 204 : 404, deleted ? {} : { error: '分类不存在。' })
+      const result = deleteCategory(lastPathSegment(request))
+      jsonResponse(response, result ? 200 : 404, result ?? { error: '分类不存在。' })
       return true
     } catch (error) {
       const code = errorCode(error) || ''
-      jsonResponse(response, ['CATEGORY_IN_USE', 'CATEGORY_RESERVED'].includes(code) ? 409 : 400, { error: errorMessage(error, '分类删除失败。') })
+      jsonResponse(response, code === 'CATEGORY_RESERVED' ? 409 : 400, { error: errorMessage(error, '分类删除失败。') })
       return true
     }
   }

@@ -48,7 +48,27 @@ describe('question repository', () => {
     assert.equal(db.getQuestion(created.id).category, target.name)
 
     assert.equal(db.removeQuestion(created.id), true)
-    assert.equal(db.deleteCategory(target.id), true)
+    assert.deepEqual(db.deleteCategory(target.id), { deletedQuestions: 0 })
+  })
+
+  it('deletes a category and all of its questions in one operation', () => {
+    const created = db.createQuestions([
+      {
+        title: '批量删除题目一', category: '待批量删除', difficulty: '简单', importance: 1,
+        answer: '答案', explanation: '解析', interviewAnswer: '建议回答', followUps: [],
+      },
+      {
+        title: '批量删除题目二', category: '待批量删除', difficulty: '中等', importance: 2,
+        answer: '答案', explanation: '解析', interviewAnswer: '建议回答', followUps: [],
+      },
+    ])
+    const category = db.listCategories().find((item) => item.name === '待批量删除')
+
+    assert.ok(category)
+    assert.equal(category.questionCount, 2)
+    assert.deepEqual(db.deleteCategory(category.id), { deletedQuestions: 2 })
+    assert.equal(db.listCategories().some((item) => item.id === category.id), false)
+    assert.equal(created.every((question) => db.getQuestion(question.id) === null), true)
   })
 
   it('replaces generated content without changing question identity or classification', () => {
